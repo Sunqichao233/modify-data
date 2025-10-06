@@ -1,0 +1,5 @@
+# PPT翻译脚本依赖包
+python-pptx>=0.6.21    # PPT文件处理
+requests>=2.28.0       # HTTP请求（用于翻译API）
+openai>=1.0.0          # OpenAI GPT翻译（可选）
+googletrans==4.0.0rc1  # Google翻译（备选）
