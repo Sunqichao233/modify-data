@@ -20,17 +20,27 @@ if sys.platform == 'win32':
     sys.stdout = codecs.getwriter("utf-8")(sys.stdout.detach())
 
 # ========= 配置区域 =========
-INPUT_FILE = "1006.csv"
-OUTPUT_FILE = "1006_final_processed.csv"
+INPUT_FILE = "10.7贺saba基础.csv"
+OUTPUT_FILE = "10.7_saba_processed.csv"
 RANDOM_SEED = 456  # 固定随机种子确保结果可重现
 
-# 课程视频时长数据（按course_id 2052-2083顺序）
-VIDEO_LENGTHS = [
-    "0:30:36", "0:30:02", "0:30:39", "0:30:03", "0:30:11", "0:30:07", "0:30:56", "0:30:04",
-    "0:30:35", "0:30:35", "0:30:11", "0:30:05", "0:30:16", "0:30:47", "0:30:04", "0:30:01",
-    "0:30:01", "0:30:32", "0:30:39", "0:30:01", "0:30:41", "0:30:48", "0:30:05", "0:30:04",
-    "0:30:02", "0:30:45", "0:30:54", "0:30:51", "0:30:04", "0:30:01", "0:30:01", "0:30:36"
+# 课程ID列表（按顺序）
+COURSE_IDS = [
+    1986, 1987, 1988, 1989, 1990, 1991, 1992, 1993, 1994, 1995, 1996, 1999, 
+    2008, 2010, 2041, 2015, 2019, 2020, 2021, 2023, 2024, 2026, 2027, 2028, 
+    2029, 2022, 2031, 2033, 2034, 2046, 2039, 2040
 ]
+
+# 课程视频时长数据（与COURSE_IDS对应）
+VIDEO_LENGTHS = [
+    "0:30:07", "0:30:36", "0:30:07", "0:30:03", "0:30:01", "0:30:14", "0:30:12", "0:30:18",
+    "0:30:21", "0:30:23", "0:30:02", "0:30:02", "0:30:05", "0:30:02", "0:30:27", "0:30:05",
+    "0:30:01", "0:30:05", "0:30:39", "0:30:11", "0:30:44", "0:30:34", "0:30:34", "0:30:01",
+    "0:30:02", "0:30:55", "0:30:08", "0:30:46", "0:30:06", "0:30:05", "0:30:22", "0:30:23"
+]
+
+# 创建课程ID到视频时长的映射
+COURSE_VIDEO_MAP = dict(zip(COURSE_IDS, VIDEO_LENGTHS))
 
 # 特殊起始日期用户（可根据需要修改）
 SPECIAL_START_DATES = {
@@ -98,10 +108,12 @@ class CSVProcessor:
             return 0
     
     def is_workday(self, dt):
-        """判断是否为工作日（周一到周五，排除8月11-15日假期）"""
+        """判断是否为工作日（周一到周五，排除8月11-15日、9月15日、9月23日假期）"""
         if dt.weekday() >= 5:  # 周六、周日
             return False
         if dt.year == 2025 and dt.month == 8 and 11 <= dt.day <= 15:
+            return False
+        if dt.year == 2025 and dt.month == 9 and dt.day in [15, 23]:
             return False
         return True
     
@@ -195,6 +207,7 @@ class CSVProcessor:
                 course_id_index = header.index('course_id')
                 user_id_index = header.index('user_id')
                 flag_index = header.index('flag')
+                first_finished_time_index = header.index('first_finished_time')
             except ValueError as e:
                 self.log(f"错误：找不到必需的列 - {e}")
                 return False
@@ -233,8 +246,8 @@ class CSVProcessor:
                 try:
                     course_id = int(row[course_id_index]) if row[course_id_index] else 0
                     
-                    # 1. Flag列修改
-                    if not (2052 <= course_id <= 2083):
+                    # 1. Flag列修改（写日文的留字）
+                    if course_id not in COURSE_IDS:
                         if "留" not in row[flag_index]:
                             row[flag_index] = row[flag_index] + "留" if row[flag_index] else "留"
                             self.processed_stats['flag_updated'] += 1
@@ -245,11 +258,9 @@ class CSVProcessor:
                         self.processed_stats['new_course_id_added'] += 1
                     
                     # 3. Course_video_length列
-                    if 2052 <= course_id <= 2083:
-                        video_index = course_id - 2052
-                        if video_index < len(VIDEO_LENGTHS):
-                            row[course_video_length_index] = VIDEO_LENGTHS[video_index]
-                            self.processed_stats['video_length_added'] += 1
+                    if course_id in COURSE_VIDEO_MAP:
+                        row[course_video_length_index] = COURSE_VIDEO_MAP[course_id]
+                        self.processed_stats['video_length_added'] += 1
                         
                         # 4. Rest_time列
                         row[rest_time_index] = str(self.random.randint(3, 5))
@@ -261,22 +272,22 @@ class CSVProcessor:
             # 第二阶段：时间计算
             self.log("第二阶段：处理时间计算...")
             
-            # 按user_id分组并按course_id排序
+            # 按user_id分组并按COURSE_IDS顺序排序
             user_groups = {}
             for i, row in enumerate(all_rows):
                 try:
                     course_id = int(row[course_id_index]) if row[course_id_index] else 0
                     user_id = row[user_id_index] if row[user_id_index] else ""
-                    if 2052 <= course_id <= 2083 and user_id:
+                    if course_id in COURSE_IDS and user_id:
                         if user_id not in user_groups:
                             user_groups[user_id] = []
                         user_groups[user_id].append((i, row, course_id))
                 except (ValueError, IndexError):
                     pass
             
-            # 对每个用户组内的数据按course_id排序
+            # 对每个用户组内的数据按COURSE_IDS中的顺序排序
             for user_id in user_groups:
-                user_groups[user_id].sort(key=lambda x: x[2])
+                user_groups[user_id].sort(key=lambda x: COURSE_IDS.index(x[2]) if x[2] in COURSE_IDS else 999)
             
             # 链式计算逻辑
             for user_id in sorted(user_groups.keys()):
@@ -292,9 +303,16 @@ class CSVProcessor:
                     rest_time_str = row[rest_time_index]
                     rest_time_minutes = int(rest_time_str) if rest_time_str and rest_time_str.isdigit() else 0
                     
-                    if course_id == 2052:
-                        # 2052: 生成随机开始时间
+                    # 获取first_finished_time的日期
+                    first_finished_str = row[first_finished_time_index]
+                    first_finished_dt = self.parse_datetime(first_finished_str)
+                    target_date = first_finished_dt.date() if first_finished_dt else datetime(2025, 8, 1).date()
+                    
+                    if course_id == COURSE_IDS[0]:
+                        # 第一个课程: 生成随机开始时间
                         utc_time = self.generate_random_start_time(user_id)
+                        # 使用first_finished_time的日期，保留生成的时间
+                        utc_time = datetime.combine(target_date, utc_time.time())
                         row[new_started_at_utc_index] = self.format_datetime(utc_time)
                         self.processed_stats['utc_time_set'] += 1
                         
@@ -310,7 +328,7 @@ class CSVProcessor:
                         row[new_started_at_index] = self.format_datetime(new_started_at_time)
                         self.processed_stats['new_started_at_added'] += 1
                     
-                    else:  # 2053-2083
+                    else:  # 其他课程
                         # 使用前一行的next_started_at + 当前行的rest_time作为基础
                         if prev_next_time is None:
                             base_time = datetime(2025, 8, 1, 9, 0)
@@ -320,6 +338,8 @@ class CSVProcessor:
                         # 应用复杂公式计算new_started_at_UTC
                         new_utc_time = self.apply_complex_formula(base_time)
                         if new_utc_time:
+                            # 使用first_finished_time的日期，保留计算的时间
+                            new_utc_time = datetime.combine(target_date, new_utc_time.time())
                             row[new_started_at_utc_index] = self.format_datetime(new_utc_time)
                             self.processed_stats['new_started_at_utc_updated'] += 1
                             
@@ -334,6 +354,51 @@ class CSVProcessor:
                                 row[next_started_at_index] = self.format_datetime(next_time)
                                 prev_next_time = next_time
                                 self.processed_stats['next_started_at_updated'] += 1
+            
+            # 第三阶段：检查并调整日期范围（确保在8.1-9.30之间）
+            self.log("第三阶段：检查并调整日期范围...")
+            max_date = datetime(2025, 9, 30).date()
+            
+            for user_id in sorted(user_groups.keys()):
+                user_data = user_groups[user_id]
+                if not user_data:
+                    continue
+                
+                # 找到该用户最后一个课程的日期
+                last_row = user_data[-1][1]
+                last_utc_str = last_row[new_started_at_utc_index]
+                last_utc_dt = self.parse_datetime(last_utc_str)
+                
+                if last_utc_dt and last_utc_dt.date() > max_date:
+                    # 计算需要提前的天数
+                    days_over = (last_utc_dt.date() - max_date).days
+                    self.log(f"用户 {user_id} 超出日期范围 {days_over} 天，调整所有日期...")
+                    
+                    # 调整该用户所有课程的日期
+                    for row_index, row, course_id in user_data:
+                        # 调整 new_started_at_UTC
+                        utc_str = row[new_started_at_utc_index]
+                        if utc_str:
+                            utc_dt = self.parse_datetime(utc_str)
+                            if utc_dt:
+                                new_utc_dt = utc_dt - timedelta(days=days_over)
+                                row[new_started_at_utc_index] = self.format_datetime(new_utc_dt)
+                        
+                        # 调整 next_started_at
+                        next_str = row[next_started_at_index]
+                        if next_str:
+                            next_dt = self.parse_datetime(next_str)
+                            if next_dt:
+                                new_next_dt = next_dt - timedelta(days=days_over)
+                                row[next_started_at_index] = self.format_datetime(new_next_dt)
+                        
+                        # 调整 new_started_at
+                        started_str = row[new_started_at_index]
+                        if started_str:
+                            started_dt = self.parse_datetime(started_str)
+                            if started_dt:
+                                new_started_dt = started_dt - timedelta(days=days_over)
+                                row[new_started_at_index] = self.format_datetime(new_started_dt)
             
             # 将处理后的行添加到结果中
             for row in all_rows:
