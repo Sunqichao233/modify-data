@@ -3,9 +3,15 @@ from datetime import datetime, timedelta
 import holidays
 import os
 import glob
+import sys
+import codecs
+
+# Windows控制台UTF-8编码支持
+if sys.platform == 'win32':
+    sys.stdout = codecs.getwriter("utf-8")(sys.stdout.detach())
 
 # ========= 可配置：CSV 文件夹路径 =========
-folder_path = r"C:\Users\user\Desktop\check数据\csv"
+folder_path = "csv"
 # ======================================
 
 # ---- 通用：时间解析（兼容横杠/斜杠，带/不带秒） ----
@@ -53,8 +59,14 @@ def is_valid_time_window(start_dt, end_dt):
 def is_weekday_jp(date_obj):
     if date_obj is None:
         return False
-    jp_holidays = holidays.Japan(years=date_obj.year)
-    return (date_obj.weekday() < 5) and (date_obj not in jp_holidays)
+    try:
+        # 确保 year 是有效的整数
+        year = int(date_obj.year)
+        jp_holidays = holidays.Japan(years=year)
+        return (date_obj.weekday() < 5) and (date_obj not in jp_holidays)
+    except (ValueError, TypeError, AttributeError):
+        # 处理 NaN 或其他无效值
+        return False
 
 # 读取文件夹内所有 CSV
 csv_files = glob.glob(os.path.join(folder_path, "*.csv"))
@@ -133,10 +145,11 @@ for file_path in csv_files:
                     issues.add((orig_idx, "条件 2 失败：开始时间未晚于前一视频结束时间（同日）"))
 
         # 条件 3：工作时段 + 工作日
-        if not is_valid_time_window(start_dt, end_dt):
-            issues.add((orig_idx, "条件 3 失败：时间超出有效工作时段（含12:00-13:00排除）"))
-        if not is_weekday_jp(start_dt.date()):
-            issues.add((orig_idx, "条件 3 失败：周末或日本节假日"))
+        if start_dt is not None and end_dt is not None:
+            if not is_valid_time_window(start_dt, end_dt):
+                issues.add((orig_idx, "条件 3 失败：时间超出有效工作时段（含12:00-13:00排除）"))
+            if not is_weekday_jp(start_dt.date()):
+                issues.add((orig_idx, "条件 3 失败：周末或日本节假日"))
 
     # 有问题则记录文件名
     if issues:

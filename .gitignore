@@ -1,6 +1,9 @@
 # CSV 数据文件
 *.csv
 
+# CSV 目录
+csv/
+
 # Python 缓存文件
 __pycache__/
 *.py[cod]

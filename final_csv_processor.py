@@ -1,450 +1,296 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-CSV数据处理最终版本脚本
-功能：对CSV文件进行复杂的时间计算和数据修改
-作者：AI Assistant
-版本：1.0
-日期：2025年10月
+CSV数据处理脚本
+功能：处理CSV文件，实现完全连续紧凑的时间调度，跳过假期和周末
 """
 
 import csv
-import os
 import sys
 import codecs
 from datetime import datetime, timedelta
 import random
 
-# Windows控制台UTF-8编码支持
 if sys.platform == 'win32':
     sys.stdout = codecs.getwriter("utf-8")(sys.stdout.detach())
 
-# ========= 配置区域 =========
-INPUT_FILE = "10.7贺saba基础.csv"
-OUTPUT_FILE = "10.7_saba_processed.csv"
-RANDOM_SEED = 456  # 固定随机种子确保结果可重现
+# ==================== 配置区域 ====================
 
-# 课程ID列表（按顺序）
+# 课程ID列表 (2052-2083)
 COURSE_IDS = [
-    1986, 1987, 1988, 1989, 1990, 1991, 1992, 1993, 1994, 1995, 1996, 1999, 
-    2008, 2010, 2041, 2015, 2019, 2020, 2021, 2023, 2024, 2026, 2027, 2028, 
-    2029, 2022, 2031, 2033, 2034, 2046, 2039, 2040
+    2052, 2053, 2054, 2055, 2056, 2057, 2058, 2059, 2060, 2061, 2062, 2063,
+    2064, 2065, 2066, 2067, 2068, 2069, 2070, 2071, 2072, 2073, 2074, 2075,
+    2076, 2077, 2078, 2079, 2080, 2081, 2082, 2083
 ]
 
-# 课程视频时长数据（与COURSE_IDS对应）
-VIDEO_LENGTHS = [
-    "0:30:07", "0:30:36", "0:30:07", "0:30:03", "0:30:01", "0:30:14", "0:30:12", "0:30:18",
-    "0:30:21", "0:30:23", "0:30:02", "0:30:02", "0:30:05", "0:30:02", "0:30:27", "0:30:05",
-    "0:30:01", "0:30:05", "0:30:39", "0:30:11", "0:30:44", "0:30:34", "0:30:34", "0:30:01",
-    "0:30:02", "0:30:55", "0:30:08", "0:30:46", "0:30:06", "0:30:05", "0:30:22", "0:30:23"
-]
+# 输入输出文件
+INPUT_FILE = "10.7saba实战.csv"
+OUTPUT_FILE = "10.7saba实战_processed.csv"
 
-# 创建课程ID到视频时长的映射
-COURSE_VIDEO_MAP = dict(zip(COURSE_IDS, VIDEO_LENGTHS))
+# 随机种子
+RANDOM_SEED = 456
 
-# 特殊起始日期用户（可根据需要修改）
-SPECIAL_START_DATES = {
-    # user_id: (year, month, day, hour, minute)
-    # 示例：'1004598': (2025, 8, 7, 9, 19),
-    # 示例：'1004609': (2025, 8, 18, 9, 39),
-    # 示例：'1004612': (2025, 8, 19, 9, 24),
+# 课程视频时长映射
+VIDEO_LENGTHS = {
+    2052: "0:30:36", 2053: "0:30:02", 2054: "0:30:39", 2055: "0:30:03",
+    2056: "0:30:11", 2057: "0:30:07", 2058: "0:30:56", 2059: "0:30:04",
+    2060: "0:30:35", 2061: "0:30:35", 2062: "0:30:11", 2063: "0:30:05",
+    2064: "0:30:16", 2065: "0:30:47", 2066: "0:30:04", 2067: "0:30:01",
+    2068: "0:30:01", 2069: "0:30:32", 2070: "0:30:39", 2071: "0:30:01",
+    2072: "0:30:41", 2073: "0:30:48", 2074: "0:30:05", 2075: "0:30:04",
+    2076: "0:30:02", 2077: "0:30:45", 2078: "0:30:54", 2079: "0:30:51",
+    2080: "0:30:04", 2081: "0:30:01", 2082: "0:30:01", 2083: "0:30:36"
 }
 
-# ===========================
+# ==================== 工具函数 ====================
 
-class CSVProcessor:
-    """CSV数据处理器"""
-    
-    def __init__(self):
-        self.random = random.Random(RANDOM_SEED)
-        self.processed_stats = {
-            'total_rows': 0,
-            'flag_updated': 0,
-            'new_course_id_added': 0,
-            'video_length_added': 0,
-            'rest_time_added': 0,
-            'utc_time_set': 0,
-            'next_started_at_updated': 0,
-            'new_started_at_utc_updated': 0,
-            'new_started_at_added': 0
-        }
-    
-    def log(self, message):
-        """输出日志信息"""
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] {message}")
-    
-    def parse_datetime(self, dt_str):
-        """解析日期时间字符串"""
-        if not dt_str or dt_str.strip() == "":
-            return None
+def is_holiday(dt):
+    """检查是否是假期（8月11-15日）"""
+    if dt.year == 2025 and dt.month == 8 and 11 <= dt.day <= 15:
+        return True
+    return False
+
+def is_weekend(dt):
+    """检查是否是周末"""
+    return dt.weekday() >= 5  # 5=周六, 6=周日
+
+def is_workday(dt):
+    """检查是否是工作日（不是周末也不是假期）"""
+    return not is_weekend(dt) and not is_holiday(dt)
+
+def get_next_workday(dt):
+    """获取下一个工作日"""
+    next_day = dt + timedelta(days=1)
+    while not is_workday(next_day):
+        next_day = next_day + timedelta(days=1)
+    return next_day
+
+def parse_time_string(time_str):
+    """解析时间字符串为分钟数"""
+    if not time_str or time_str.strip() == "":
+        return 0
+    try:
+        parts = time_str.split(":")
+        if len(parts) == 3:
+            hours, minutes, seconds = map(int, parts)
+            return hours * 60 + minutes + seconds / 60
+        elif len(parts) == 2:
+            minutes, seconds = map(int, parts)
+            return minutes + seconds / 60
+        return 0
+    except (ValueError, IndexError):
+        return 0
+
+def parse_datetime(dt_str):
+    """解析日期时间字符串"""
+    if not dt_str or dt_str.strip() == "":
+        return None
+    try:
+        return datetime.strptime(dt_str, "%Y/%m/%d %H:%M")
+    except ValueError:
         try:
-            return datetime.strptime(dt_str, "%Y/%m/%d %H:%M")
+            return datetime.strptime(dt_str, "%Y/%m/%d %H:%M:%S")
         except ValueError:
-            try:
-                return datetime.strptime(dt_str, "%Y/%m/%d %H:%M:%S")
-            except ValueError:
-                return None
-    
-    def format_datetime(self, dt):
-        """格式化日期时间"""
-        if dt is None:
-            return ""
-        return f"{dt.year}/{dt.month}/{dt.day} {dt.hour}:{dt.minute:02d}"
-    
-    def parse_time_string(self, time_str):
-        """解析时间字符串为分钟数"""
-        if not time_str or time_str.strip() == "":
-            return 0
-        try:
-            parts = time_str.split(":")
-            if len(parts) == 3:
-                hours, minutes, seconds = map(int, parts)
-                return hours * 60 + minutes + seconds / 60
-            elif len(parts) == 2:
-                minutes, seconds = map(int, parts)
-                return minutes + seconds / 60
-            return 0
-        except (ValueError, IndexError):
-            return 0
-    
-    def is_workday(self, dt):
-        """判断是否为工作日（周一到周五，排除8月11-15日、9月15日、9月23日假期）"""
-        if dt.weekday() >= 5:  # 周六、周日
-            return False
-        if dt.year == 2025 and dt.month == 8 and 11 <= dt.day <= 15:
-            return False
-        if dt.year == 2025 and dt.month == 9 and dt.day in [15, 23]:
-            return False
-        return True
-    
-    def next_workday(self, dt):
-        """获取下一个工作日"""
-        next_day = dt + timedelta(days=1)
-        while not self.is_workday(next_day):
-            next_day += timedelta(days=1)
-        return next_day
-    
-    def apply_complex_formula(self, base_time):
-        """
-        应用复杂的Excel公式逻辑
-        base_time: 前一行的next_started_at + rest_time
-        """
-        if base_time is None:
             return None
-        
-        # 获取日期部分
-        d = base_time.replace(hour=0, minute=0, second=0, microsecond=0)
-        
-        # 计算小时+分钟/60
-        hour_decimal = base_time.hour + base_time.minute / 60.0
-        
-        # 主要逻辑：IF(HOUR(sp) + MINUTE(sp)/60 >= 16.5, ...)
-        if hour_decimal >= 16.5:  # 如果超过16:30
-            # WORKDAY(s,1) = 下一个工作日
-            next_work = self.next_workday(base_time)
-            
-            # RANDBETWEEN(0,1)=0 随机选择
-            if self.random.randint(0, 1) == 0:
-                # 下一个工作日 9:00 + 0-30分钟随机
-                return next_work.replace(hour=9, minute=0) + timedelta(minutes=self.random.randint(0, 30))
-            else:
-                # 下一个工作日 13:00 + 0-60分钟随机
-                return next_work.replace(hour=13, minute=0) + timedelta(minutes=self.random.randint(0, 60))
-        else:
-            # IF(HOUR(sp) < 9, ...)
-            if base_time.hour < 9:  # 如果早于9:00
-                # d + TIME(9,0,0) = 当天9:00
-                return d.replace(hour=9, minute=0)
-            else:
-                # 检查是否在10:30-13:00之间（午休时间）
-                base_time_only = base_time.time()
-                morning_end = datetime.strptime("10:30", "%H:%M").time()
-                afternoon_start = datetime.strptime("13:00", "%H:%M").time()
-                
-                if base_time_only >= morning_end and base_time_only < afternoon_start:
-                    # 午休时间，跳转到13:00-14:00
-                    return d.replace(hour=13, minute=0) + timedelta(minutes=self.random.randint(0, 60))
-                else:
-                    # 正常工作时间，直接使用计算结果
-                    return base_time
-    
-    def generate_random_start_time(self, user_id):
-        """为2052行生成随机开始时间"""
-        # 检查是否有特殊设置
-        if user_id in SPECIAL_START_DATES:
-            year, month, day, hour, minute = SPECIAL_START_DATES[user_id]
-            return datetime(year, month, day, hour, minute)
-        
-        # 随机选择日期：8月1日、4日、5日
-        dates = [(2025, 8, 1), (2025, 8, 4), (2025, 8, 5)]
-        year, month, day = self.random.choice(dates)
-        
-        # 随机时间：9:01-10:01
-        hour = 9
-        minute = self.random.randint(1, 61)
-        if minute > 60:
-            hour = 10
-            minute = minute - 60
-        
-        return datetime(year, month, day, hour, minute)
-    
-    def process_csv(self, input_file, output_file):
-        """处理CSV文件的主函数"""
-        self.log(f"开始处理文件: {input_file}")
-        
-        if not os.path.exists(input_file):
-            self.log(f"错误：文件 {input_file} 不存在")
-            return False
-        
-        # 读取CSV文件
-        rows = []
-        with open(input_file, 'r', encoding='utf-8', newline='') as f:
-            reader = csv.reader(f)
-            header = next(reader)
-            
-            # 查找列索引
-            try:
-                course_id_index = header.index('course_id')
-                user_id_index = header.index('user_id')
-                flag_index = header.index('flag')
-                first_finished_time_index = header.index('first_finished_time')
-            except ValueError as e:
-                self.log(f"错误：找不到必需的列 - {e}")
-                return False
-            
-            # 添加新列（如果不存在）
-            new_columns = ['new_course_id', 'course_video_length', 'rest_time', 
-                          'new_started_at_UTC', 'next_started_at', 'new_started_at']
-            
-            for col in new_columns:
-                if col not in header:
-                    header.append(col)
-            
-            # 获取新列的索引
-            new_course_id_index = header.index('new_course_id')
-            course_video_length_index = header.index('course_video_length')
-            rest_time_index = header.index('rest_time')
-            new_started_at_utc_index = header.index('new_started_at_UTC')
-            next_started_at_index = header.index('next_started_at')
-            new_started_at_index = header.index('new_started_at')
-            
-            rows.append(header)
-            
-            # 读取所有数据行
-            all_rows = []
-            for row in reader:
-                # 确保行有足够的列
-                while len(row) < len(header):
-                    row.append("")
-                all_rows.append(row)
-            
-            self.processed_stats['total_rows'] = len(all_rows)
-            
-            # 第一阶段：基础数据修改
-            self.log("第一阶段：处理基础列修改...")
-            for row in all_rows:
-                try:
-                    course_id = int(row[course_id_index]) if row[course_id_index] else 0
-                    
-                    # 1. Flag列修改（写日文的留字）
-                    if course_id not in COURSE_IDS:
-                        if "留" not in row[flag_index]:
-                            row[flag_index] = row[flag_index] + "留" if row[flag_index] else "留"
-                            self.processed_stats['flag_updated'] += 1
-                    
-                    # 2. New_course_id列
-                    if "留" not in row[flag_index] and row[course_id_index]:
-                        row[new_course_id_index] = row[course_id_index]
-                        self.processed_stats['new_course_id_added'] += 1
-                    
-                    # 3. Course_video_length列
-                    if course_id in COURSE_VIDEO_MAP:
-                        row[course_video_length_index] = COURSE_VIDEO_MAP[course_id]
-                        self.processed_stats['video_length_added'] += 1
-                        
-                        # 4. Rest_time列
-                        row[rest_time_index] = str(self.random.randint(3, 5))
-                        self.processed_stats['rest_time_added'] += 1
-                
-                except (ValueError, IndexError):
-                    continue
-            
-            # 第二阶段：时间计算
-            self.log("第二阶段：处理时间计算...")
-            
-            # 按user_id分组并按COURSE_IDS顺序排序
-            user_groups = {}
-            for i, row in enumerate(all_rows):
-                try:
-                    course_id = int(row[course_id_index]) if row[course_id_index] else 0
-                    user_id = row[user_id_index] if row[user_id_index] else ""
-                    if course_id in COURSE_IDS and user_id:
-                        if user_id not in user_groups:
-                            user_groups[user_id] = []
-                        user_groups[user_id].append((i, row, course_id))
-                except (ValueError, IndexError):
-                    pass
-            
-            # 对每个用户组内的数据按COURSE_IDS中的顺序排序
-            for user_id in user_groups:
-                user_groups[user_id].sort(key=lambda x: COURSE_IDS.index(x[2]) if x[2] in COURSE_IDS else 999)
-            
-            # 链式计算逻辑
-            for user_id in sorted(user_groups.keys()):
-                self.log(f"处理用户ID: {user_id}")
-                user_data = user_groups[user_id]
-                
-                # 存储当前用户组内前一行的next_started_at时间
-                prev_next_time = None
-                
-                for i, (row_index, row, course_id) in enumerate(user_data):
-                    course_video_length_str = row[course_video_length_index]
-                    video_length_minutes = self.parse_time_string(course_video_length_str)
-                    rest_time_str = row[rest_time_index]
-                    rest_time_minutes = int(rest_time_str) if rest_time_str and rest_time_str.isdigit() else 0
-                    
-                    # 获取first_finished_time的日期
-                    first_finished_str = row[first_finished_time_index]
-                    first_finished_dt = self.parse_datetime(first_finished_str)
-                    target_date = first_finished_dt.date() if first_finished_dt else datetime(2025, 8, 1).date()
-                    
-                    if course_id == COURSE_IDS[0]:
-                        # 第一个课程: 生成随机开始时间
-                        utc_time = self.generate_random_start_time(user_id)
-                        # 使用first_finished_time的日期，保留生成的时间
-                        utc_time = datetime.combine(target_date, utc_time.time())
-                        row[new_started_at_utc_index] = self.format_datetime(utc_time)
-                        self.processed_stats['utc_time_set'] += 1
-                        
-                        # 计算next_started_at
-                        if video_length_minutes > 0:
-                            next_time = utc_time + timedelta(minutes=video_length_minutes)
-                            row[next_started_at_index] = self.format_datetime(next_time)
-                            prev_next_time = next_time
-                            self.processed_stats['next_started_at_updated'] += 1
-                        
-                        # 计算new_started_at = new_started_at_UTC - 9小时
-                        new_started_at_time = utc_time - timedelta(hours=9)
-                        row[new_started_at_index] = self.format_datetime(new_started_at_time)
-                        self.processed_stats['new_started_at_added'] += 1
-                    
-                    else:  # 其他课程
-                        # 使用前一行的next_started_at + 当前行的rest_time作为基础
-                        if prev_next_time is None:
-                            base_time = datetime(2025, 8, 1, 9, 0)
-                        else:
-                            base_time = prev_next_time + timedelta(minutes=rest_time_minutes)
-                        
-                        # 应用复杂公式计算new_started_at_UTC
-                        new_utc_time = self.apply_complex_formula(base_time)
-                        if new_utc_time:
-                            # 使用first_finished_time的日期，保留计算的时间
-                            new_utc_time = datetime.combine(target_date, new_utc_time.time())
-                            row[new_started_at_utc_index] = self.format_datetime(new_utc_time)
-                            self.processed_stats['new_started_at_utc_updated'] += 1
-                            
-                            # 计算new_started_at = new_started_at_UTC - 9小时
-                            new_started_at_time = new_utc_time - timedelta(hours=9)
-                            row[new_started_at_index] = self.format_datetime(new_started_at_time)
-                            self.processed_stats['new_started_at_added'] += 1
-                            
-                            # 计算next_started_at
-                            if video_length_minutes > 0:
-                                next_time = new_utc_time + timedelta(minutes=video_length_minutes)
-                                row[next_started_at_index] = self.format_datetime(next_time)
-                                prev_next_time = next_time
-                                self.processed_stats['next_started_at_updated'] += 1
-            
-            # 第三阶段：检查并调整日期范围（确保在8.1-9.30之间）
-            self.log("第三阶段：检查并调整日期范围...")
-            max_date = datetime(2025, 9, 30).date()
-            
-            for user_id in sorted(user_groups.keys()):
-                user_data = user_groups[user_id]
-                if not user_data:
-                    continue
-                
-                # 找到该用户最后一个课程的日期
-                last_row = user_data[-1][1]
-                last_utc_str = last_row[new_started_at_utc_index]
-                last_utc_dt = self.parse_datetime(last_utc_str)
-                
-                if last_utc_dt and last_utc_dt.date() > max_date:
-                    # 计算需要提前的天数
-                    days_over = (last_utc_dt.date() - max_date).days
-                    self.log(f"用户 {user_id} 超出日期范围 {days_over} 天，调整所有日期...")
-                    
-                    # 调整该用户所有课程的日期
-                    for row_index, row, course_id in user_data:
-                        # 调整 new_started_at_UTC
-                        utc_str = row[new_started_at_utc_index]
-                        if utc_str:
-                            utc_dt = self.parse_datetime(utc_str)
-                            if utc_dt:
-                                new_utc_dt = utc_dt - timedelta(days=days_over)
-                                row[new_started_at_utc_index] = self.format_datetime(new_utc_dt)
-                        
-                        # 调整 next_started_at
-                        next_str = row[next_started_at_index]
-                        if next_str:
-                            next_dt = self.parse_datetime(next_str)
-                            if next_dt:
-                                new_next_dt = next_dt - timedelta(days=days_over)
-                                row[next_started_at_index] = self.format_datetime(new_next_dt)
-                        
-                        # 调整 new_started_at
-                        started_str = row[new_started_at_index]
-                        if started_str:
-                            started_dt = self.parse_datetime(started_str)
-                            if started_dt:
-                                new_started_dt = started_dt - timedelta(days=days_over)
-                                row[new_started_at_index] = self.format_datetime(new_started_dt)
-            
-            # 将处理后的行添加到结果中
-            for row in all_rows:
-                rows.append(row)
-        
-        # 写入输出文件
-        with open(output_file, 'w', encoding='utf-8', newline='') as f:
-            writer = csv.writer(f)
-            writer.writerows(rows)
-        
-        self.log(f"处理完成！输出文件: {output_file}")
-        self.print_statistics()
-        return True
-    
-    def print_statistics(self):
-        """打印处理统计信息"""
-        self.log("=" * 50)
-        self.log("处理统计信息:")
-        self.log(f"总行数: {self.processed_stats['total_rows']}")
-        self.log(f"Flag列更新: {self.processed_stats['flag_updated']}")
-        self.log(f"New_course_id添加: {self.processed_stats['new_course_id_added']}")
-        self.log(f"Course_video_length添加: {self.processed_stats['video_length_added']}")
-        self.log(f"Rest_time添加: {self.processed_stats['rest_time_added']}")
-        self.log(f"UTC时间设置: {self.processed_stats['utc_time_set']}")
-        self.log(f"Next_started_at更新: {self.processed_stats['next_started_at_updated']}")
-        self.log(f"New_started_at_UTC更新: {self.processed_stats['new_started_at_utc_updated']}")
-        self.log(f"New_started_at添加: {self.processed_stats['new_started_at_added']}")
-        self.log("=" * 50)
 
-def main():
-    """主函数"""
-    processor = CSVProcessor()
-    
-    # 检查输入文件
-    if not os.path.exists(INPUT_FILE):
-        processor.log(f"错误：输入文件 {INPUT_FILE} 不存在")
-        processor.log("请确保CSV文件存在于当前目录")
-        return
-    
-    # 处理CSV文件
-    success = processor.process_csv(INPUT_FILE, OUTPUT_FILE)
-    
-    if success:
-        processor.log("✅ 所有处理完成！")
-    else:
-        processor.log("❌ 处理过程中出现错误")
+def format_datetime(dt):
+    """格式化日期时间"""
+    if dt is None:
+        return ""
+    return f"{dt.year}/{dt.month}/{dt.day} {dt.hour}:{dt.minute:02d}"
 
-if __name__ == "__main__":
-    main()
+# ==================== 主处理逻辑 ====================
+
+print("=" * 60)
+print("CSV数据处理脚本")
+print("=" * 60)
+print(f"输入文件: {INPUT_FILE}")
+print(f"输出文件: {OUTPUT_FILE}")
+print(f"课程范围: {COURSE_IDS[0]}-{COURSE_IDS[-1]}")
+print(f"假期设置: 8月11-15日")
+print("=" * 60)
+print()
+
+# 读取CSV文件
+print("正在读取文件...")
+try:
+    with open(INPUT_FILE, 'r', encoding='gbk', newline='') as f:
+        reader = csv.reader(f)
+        header = next(reader)
+        all_rows = list(reader)
+except FileNotFoundError:
+    print(f"❌ 错误：找不到文件 {INPUT_FILE}")
+    sys.exit(1)
+except Exception as e:
+    print(f"❌ 读取文件失败: {e}")
+    sys.exit(1)
+
+print(f"✅ 读取了 {len(all_rows)} 行数据\n")
+
+# 获取列索引
+try:
+    user_id_index = header.index('user_id')
+    course_id_index = header.index('course_id')
+    new_course_id_index = header.index('new_course_id')
+    first_finished_time_index = header.index('first_finished_time')
+    new_started_at_UTC_index = header.index('new_started_at_UTC')
+    new_started_at_index = header.index('new_started_at')
+    next_started_at_index = header.index('next_started_at')
+    course_video_length_index = header.index('course_video_length')
+    rest_time_index = header.index('rest_time')
+except ValueError as e:
+    print(f"❌ 错误：CSV文件缺少必要的列: {e}")
+    sys.exit(1)
+
+# 初始化随机数生成器
+random_gen = random.Random(RANDOM_SEED)
+
+# 第一步：收集每个用户的所有课程行
+print("正在分析数据...")
+user_course_data = {}
+
+for i, row in enumerate(all_rows):
+    user_id = row[user_id_index]
+    course_id = row[course_id_index]
+    first_finished_time = row[first_finished_time_index]
+    
+    if course_id and user_id:
+        try:
+            cid = int(course_id)
+            if cid in COURSE_IDS:
+                if user_id not in user_course_data:
+                    user_course_data[user_id] = []
+                user_course_data[user_id].append((i, cid, first_finished_time))
+        except ValueError:
+            pass
+
+print(f"✅ 找到 {len(user_course_data)} 个用户的课程数据\n")
+
+# 第二步：为每个用户生成完全连续紧凑的时间
+print("正在生成时间数据（跳过假期和周末）...")
+processed_count = 0
+
+for user_id, course_data in user_course_data.items():
+    # 获取第一个课程的日期作为起始日期
+    first_fft = course_data[0][2]
+    first_fft_dt = parse_datetime(first_fft)
+    start_date = first_fft_dt.date() if first_fft_dt else datetime(2025, 8, 1).date()
+    
+    # 确保起始日期是工作日
+    start_datetime = datetime.combine(start_date, datetime.min.time())
+    if not is_workday(start_datetime):
+        start_datetime = get_next_workday(start_datetime)
+        start_date = start_datetime.date()
+    
+    # 第一个课程：随机起始时间9:01-9:30
+    total_minutes = random_gen.randint(1, 30)
+    current_time = datetime.combine(start_date, datetime(2025, 1, 1, 9, total_minutes).time())
+    
+    # 逐个处理该用户的所有课程（完全连续）
+    for idx, (row_idx, cid, fft) in enumerate(course_data):
+        if idx >= len(COURSE_IDS):
+            break  # 超出课程ID范围
+        
+        row = all_rows[row_idx]
+        
+        # 分配new_course_id
+        new_course_id = COURSE_IDS[idx]
+        row[new_course_id_index] = str(new_course_id)
+        
+        # 获取视频时长和休息时间
+        video_length_minutes = parse_time_string(VIDEO_LENGTHS[new_course_id])
+        rest_time = random_gen.randint(3, 5)
+        
+        # 确保当前时间在工作日
+        if not is_workday(current_time):
+            next_workday = get_next_workday(current_time)
+            current_time = next_workday.replace(hour=9, minute=0)
+        
+        # 使用连续计算的时间
+        utc_time = current_time
+        
+        # 计算结束时间
+        next_time = utc_time + timedelta(minutes=video_length_minutes)
+        
+        # 检查结束时间是否超过18:00，如果超过则跳到下一个工作日
+        end_of_day = utc_time.replace(hour=18, minute=0, second=0, microsecond=0)
+        if next_time > end_of_day:
+            # 跳到下一个工作日9:00
+            next_workday = get_next_workday(utc_time)
+            utc_time = next_workday.replace(hour=9, minute=0)
+            next_time = utc_time + timedelta(minutes=video_length_minutes)
+        
+        # 检查结束时间是否跨越午休 (12:00-13:00)
+        lunch_start = utc_time.replace(hour=12, minute=0, second=0, microsecond=0)
+        lunch_end = utc_time.replace(hour=13, minute=0, second=0, microsecond=0)
+        
+        # 如果结束时间会落在12:00-13:00之间，调整到下午开始
+        if next_time > lunch_start and next_time < lunch_end:
+            # 直接跳到13:00开始，避免时间倒流
+            utc_time = lunch_end
+            next_time = utc_time + timedelta(minutes=video_length_minutes)
+        elif utc_time < lunch_start and next_time > lunch_end:
+            # 视频太长，跨越整个午休，从13:00开始
+            utc_time = lunch_end
+            next_time = utc_time + timedelta(minutes=video_length_minutes)
+        
+        # 计算new_started_at (UTC - 9小时)
+        new_started_at_time = utc_time - timedelta(hours=9)
+        
+        # 更新行数据
+        row[new_started_at_UTC_index] = format_datetime(utc_time)
+        row[next_started_at_index] = format_datetime(next_time)
+        row[new_started_at_index] = format_datetime(new_started_at_time)
+        row[course_video_length_index] = VIDEO_LENGTHS[new_course_id]
+        row[rest_time_index] = str(rest_time)
+        
+        processed_count += 1
+        
+        # 计算下一个课程的开始时间（完全连续）
+        current_time = next_time + timedelta(minutes=rest_time)
+        
+        # 检查是否需要跨过午休
+        if current_time > lunch_start and current_time < lunch_end:
+            current_time = lunch_end
+        
+        # 检查是否超过工作时间（17:30后跳到下一个工作日）
+        if current_time.hour >= 18 or (current_time.hour == 17 and current_time.minute > 30):
+            # 跳到下一个工作日的9:00
+            next_workday = get_next_workday(current_time)
+            current_time = next_workday.replace(hour=9, minute=0)
+        
+        # 最后再次确认不在假期或周末
+        if not is_workday(current_time):
+            next_workday = get_next_workday(current_time)
+            current_time = next_workday.replace(hour=9, minute=0)
+
+print(f"✅ 处理了 {processed_count} 条课程记录\n")
+
+# 第三步：写入输出文件
+print("正在写入文件...")
+try:
+    with open(OUTPUT_FILE, 'w', encoding='utf-8', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(header)
+        writer.writerows(all_rows)
+    print(f"✅ 成功写入: {OUTPUT_FILE}\n")
+except Exception as e:
+    print(f"❌ 写入文件失败: {e}")
+    sys.exit(1)
+
+# 完成
+print("=" * 60)
+print("✅ 处理完成！")
+print("=" * 60)
+print("\n特性说明：")
+print("  ✓ 时间完全连续紧凑，充分利用工作时段")
+print("  ✓ 工作时间：9:00-12:00, 13:00-18:00")
+print("  ✓ 避免午休时段：12:00-13:00")
+print("  ✓ 跳过假期：8月11-15日")
+print("  ✓ 跳过周末（周六、周日）")
+print("  ✓ 结束时间不超过18:00")
+print("  ✓ 不存在时间倒流/重叠")
+print("  ✓ 课程间休息：3-5分钟随机")
+print("  ✓ 超过限制自动跳到下一个工作日9:00")
+print("  ✓ new_course_id按2052-2083顺序分配")
+print("\n" + "=" * 60)
