@@ -3,6 +3,7 @@
  * 比Selenium更稳定、速度更快的Web自动化解决方案
  */
 
+const playwright = require('playwright');
 const { chromium, firefox, webkit } = require('playwright');
 const fs = require('fs');
 const path = require('path');
@@ -77,6 +78,327 @@ class PlaywrightDownloader {
         const maxDelay = max || this.config.humanDelay.max;
         const delay = Math.random() * (maxDelay - minDelay) + minDelay;
         await new Promise(resolve => setTimeout(resolve, delay));
+    }
+
+    /**
+     * 处理登录
+     */
+    async handleLogin(page, loginConfig) {
+        if (!loginConfig || !loginConfig.enabled) {
+            console.log('⏭️  跳过登录步骤');
+            return true;
+        }
+
+        console.log('🔐 开始处理登录...');
+        
+        try {
+            // 如果有预定义的Cookie，先加载
+            if (loginConfig.predefinedCookies && loginConfig.predefinedCookies.length > 0) {
+                console.log('🍪 加载预定义Cookie');
+                await this.loadPredefinedCookies(page, loginConfig.predefinedCookies);
+                await page.reload({ waitUntil: 'networkidle' });
+                await this.humanDelay(2000, 3000);
+                
+                // 检查预定义Cookie登录是否成功
+                if (loginConfig.loggedInIndicator) {
+                    const loggedInElement = await this.findElement(page, loginConfig.loggedInIndicator);
+                    if (loggedInElement) {
+                        console.log('✅ 预定义Cookie登录成功');
+                        return true;
+                    }
+                }
+            }
+            
+            // 如果有保存的Cookie，再尝试加载
+            if (loginConfig.useCookies && await this.loadCookies(page)) {
+                console.log('🍪 使用保存的Cookie登录');
+                await page.reload({ waitUntil: 'networkidle' });
+                await this.humanDelay(2000, 3000);
+                
+                // 检查Cookie登录是否成功
+                if (loginConfig.loggedInIndicator) {
+                    const loggedInElement = await this.findElement(page, loginConfig.loggedInIndicator);
+                    if (loggedInElement) {
+                        console.log('✅ Cookie登录成功');
+                        return true;
+                    }
+                }
+            }
+            
+            // 等待登录页面加载
+            await this.humanDelay(2000, 3000);
+            
+            // 检查是否已经登录（通过检查特定元素）
+            if (loginConfig.loggedInIndicator) {
+                const loggedInElement = await this.findElement(page, loginConfig.loggedInIndicator);
+                if (loggedInElement) {
+                    console.log('✅ 已经登录，跳过登录步骤');
+                    return true;
+                }
+            }
+            
+            // 如果启用了手动登录模式
+            if (loginConfig.manualLogin) {
+                console.log('🖐️  手动登录模式已启用');
+                console.log('请在浏览器中手动完成登录，然后按任意键继续...');
+                
+                // 等待用户手动登录
+                await this.waitForManualLogin(page, loginConfig);
+                
+                // 保存Cookie以供下次使用
+                if (loginConfig.useCookies) {
+                    await this.saveCookies(page);
+                }
+                
+                return true;
+            }
+            
+            // 自动登录流程
+            return await this.performAutoLogin(page, loginConfig);
+            
+        } catch (error) {
+            console.error('❌ 登录失败:', error.message);
+            console.log('💡 建议：');
+            console.log('1. 启用手动登录模式：在配置中设置 "manualLogin": true');
+            console.log('2. 启用Cookie保存：在配置中设置 "useCookies": true');
+            console.log('3. 检查登录页面元素选择器是否正确');
+            return false;
+        }
+    }
+    
+    /**
+     * 执行自动登录
+     */
+    async performAutoLogin(page, loginConfig) {
+        // 查找用户名输入框
+        const usernameInput = await this.findElement(page, loginConfig.usernameSelector);
+        if (!usernameInput) {
+            throw new Error('未找到用户名输入框');
+        }
+        
+        // 输入用户名
+        console.log('⌨️  输入用户名');
+        await this.humanType(page, usernameInput, loginConfig.username);
+        await this.humanDelay(500, 1000);
+        
+        // 查找密码输入框
+        const passwordInput = await this.findElement(page, loginConfig.passwordSelector);
+        if (!passwordInput) {
+            throw new Error('未找到密码输入框');
+        }
+        
+        // 输入密码
+        console.log('🔑 输入密码');
+        await this.humanType(page, passwordInput, loginConfig.password);
+        await this.humanDelay(500, 1000);
+        
+        // 点击登录按钮
+        const loginButton = await this.findElement(page, loginConfig.loginButtonSelector);
+        if (!loginButton) {
+            throw new Error('未找到登录按钮');
+        }
+        
+        console.log('🚀 点击登录按钮');
+        await loginButton.click();
+        
+        // 等待登录完成
+        await this.humanDelay(3000, 5000);
+        
+        // 验证登录是否成功
+        if (loginConfig.loggedInIndicator) {
+            const loggedInElement = await this.findElement(page, loginConfig.loggedInIndicator);
+            if (loggedInElement) {
+                console.log('✅ 自动登录成功');
+                
+                // 保存Cookie以供下次使用
+                if (loginConfig.useCookies) {
+                    await this.saveCookies(page);
+                }
+                
+                return true;
+            } else {
+                throw new Error('登录验证失败');
+            }
+        }
+        
+        console.log('✅ 登录完成');
+        return true;
+    }
+    
+    /**
+     * 等待手动登录完成
+     */
+    async waitForManualLogin(page, loginConfig) {
+        console.log('⏳ 等待手动登录完成...');
+        console.log('📋 请在浏览器中完成以下操作：');
+        console.log('   1. 输入用户名和密码');
+        console.log('   2. 处理验证码（如有）');
+        console.log('   3. 点击登录按钮');
+        console.log('   4. 等待页面跳转或出现用户信息');
+        console.log('💡 脚本会自动检测登录状态，无需手动操作');
+        
+        // 等待登录成功的指示器出现
+        let loginSuccess = false;
+        let attempts = 0;
+        const maxAttempts = 120; // 最多等待10分钟
+        const initialUrl = page.url();
+        
+        while (!loginSuccess && attempts < maxAttempts) {
+            await this.humanDelay(3000, 3000); // 每3秒检查一次
+            attempts++;
+            
+            try {
+                // 方法1: 检查登录成功指示器
+                if (loginConfig.loggedInIndicator) {
+                    const loggedInElement = await this.findElement(page, loginConfig.loggedInIndicator);
+                    if (loggedInElement) {
+                        loginSuccess = true;
+                        console.log('✅ 检测到登录成功指示器');
+                        break;
+                    }
+                }
+                
+                // 方法2: 检查URL变化（离开登录页面）
+                const currentUrl = page.url();
+                if (!currentUrl.includes('login') && currentUrl !== initialUrl) {
+                    loginSuccess = true;
+                    console.log('✅ 检测到页面跳转，登录成功');
+                    break;
+                }
+                
+                // 方法3: 检查页面标题变化
+                const pageTitle = await page.title();
+                if (pageTitle && !pageTitle.toLowerCase().includes('login') && !pageTitle.toLowerCase().includes('登录')) {
+                    // 进一步验证是否真的登录成功
+                    await this.humanDelay(2000, 2000);
+                    const newUrl = page.url();
+                    if (!newUrl.includes('login')) {
+                        loginSuccess = true;
+                        console.log('✅ 检测到页面标题变化，登录成功');
+                        break;
+                    }
+                }
+                
+                // 方法4: 检查是否出现用户相关元素
+                const userElements = [
+                    '.user-info', '.user-name', '.username', '.user-avatar',
+                    '[data-testid="user-menu"]', '.logout', '.dashboard',
+                    '.profile', '.account', '.user-dropdown'
+                ];
+                
+                for (const selector of userElements) {
+                    const element = await this.findElement(page, selector);
+                    if (element) {
+                        loginSuccess = true;
+                        console.log(`✅ 检测到用户元素 ${selector}，登录成功`);
+                        break;
+                    }
+                }
+                
+                if (loginSuccess) break;
+                
+                // 方法5: 检查Cookie变化
+                const cookies = await page.context().cookies();
+                const sessionCookies = cookies.filter(cookie => 
+                    cookie.name.toLowerCase().includes('session') || 
+                    cookie.name.toLowerCase().includes('token') ||
+                    cookie.name.toLowerCase().includes('auth')
+                );
+                
+                if (sessionCookies.length > 0) {
+                    // 有会话Cookie，可能已登录，再次验证
+                    await this.humanDelay(2000, 2000);
+                    const finalUrl = page.url();
+                    if (!finalUrl.includes('login')) {
+                        loginSuccess = true;
+                        console.log('✅ 检测到会话Cookie且页面已跳转，登录成功');
+                        break;
+                    }
+                }
+                
+            } catch (error) {
+                console.warn(`⚠️  登录检测过程中出现错误: ${error.message}`);
+            }
+            
+            // 定期提示
+            if (attempts % 10 === 0) { // 每30秒提示一次
+                const elapsed = attempts * 3;
+                console.log(`⏳ 仍在等待登录完成... (已等待 ${elapsed} 秒)`);
+                console.log(`💡 提示: 请确保在浏览器中完成登录操作`);
+            }
+        }
+        
+        if (!loginSuccess) {
+            console.error('❌ 手动登录检测超时');
+            console.log('💡 可能的原因：');
+            console.log('   1. 登录页面元素选择器不正确');
+            console.log('   2. 登录后页面没有明显变化');
+            console.log('   3. 网络延迟或页面加载缓慢');
+            console.log('   4. 登录失败但页面没有明确提示');
+            throw new Error('手动登录超时，请检查登录状态和配置');
+        }
+        
+        // 登录成功后等待页面稳定
+        console.log('⏳ 等待页面稳定...');
+        await this.humanDelay(3000, 5000);
+        console.log('✅ 手动登录检测完成，继续执行后续操作');
+    }
+    
+    /**
+     * 保存Cookie
+     */
+    async saveCookies(page) {
+        try {
+            const cookies = await page.context().cookies();
+            const cookiesPath = path.join(this.config.downloadDir, '../cookies.json');
+            fs.writeFileSync(cookiesPath, JSON.stringify(cookies, null, 2));
+            console.log('🍪 Cookie已保存');
+        } catch (error) {
+            console.warn('⚠️  Cookie保存失败:', error.message);
+        }
+    }
+    
+    /**
+     * 加载Cookie
+     */
+    async loadCookies(page) {
+        try {
+            const cookiesPath = path.join(this.config.downloadDir, '../cookies.json');
+            if (fs.existsSync(cookiesPath)) {
+                const cookies = JSON.parse(fs.readFileSync(cookiesPath, 'utf8'));
+                await page.context().addCookies(cookies);
+                console.log('🍪 Cookie已加载');
+                return true;
+            }
+        } catch (error) {
+            console.warn('⚠️  Cookie加载失败:', error.message);
+        }
+        return false;
+    }
+    
+    /**
+     * 加载预定义Cookie
+     */
+    async loadPredefinedCookies(page, predefinedCookies) {
+        try {
+            // 格式化Cookie数据
+            const formattedCookies = predefinedCookies.map(cookie => ({
+                name: cookie.name,
+                value: cookie.value,
+                domain: cookie.domain || '.trip7.ai',
+                path: cookie.path || '/',
+                httpOnly: cookie.httpOnly || false,
+                secure: cookie.secure || false,
+                sameSite: cookie.sameSite || 'Lax'
+            }));
+            
+            await page.context().addCookies(formattedCookies);
+            console.log(`🍪 已加载 ${formattedCookies.length} 个预定义Cookie`);
+            return true;
+        } catch (error) {
+            console.warn('⚠️  预定义Cookie加载失败:', error.message);
+            return false;
+        }
     }
 
     /**
@@ -189,16 +511,29 @@ class PlaywrightDownloader {
     /**
      * 批量下载
      */
-    async batchDownload(websiteUrl, searchData, selectors) {
+    async batchDownload(websiteUrl, searchData, selectors, loginConfig = null, targetUrl = null) {
         console.log(`🎯 开始批量下载任务，共${searchData.length}个项目`);
         
         const page = await this.context.newPage();
         
         try {
-            // 访问网站
-            console.log(`🌐 访问网站: ${websiteUrl}`);
+            // 访问登录页面
+            console.log(`🌐 访问登录页面: ${websiteUrl}`);
             await page.goto(websiteUrl, { waitUntil: 'networkidle' });
             await this.humanDelay(2000, 4000);
+            
+            // 处理登录
+            const loginSuccess = await this.handleLogin(page, loginConfig);
+            if (loginConfig && loginConfig.enabled && !loginSuccess) {
+                throw new Error('登录失败，无法继续执行下载任务');
+            }
+            
+            // 登录成功后跳转到目标页面
+            if (targetUrl && targetUrl !== websiteUrl) {
+                console.log(`🔄 跳转到目标页面: ${targetUrl}`);
+                await page.goto(targetUrl, { waitUntil: 'networkidle' });
+                await this.humanDelay(2000, 4000);
+            }
 
             for (let i = 0; i < searchData.length; i++) {
                 const searchItem = searchData[i];

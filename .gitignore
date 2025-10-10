@@ -32,3 +32,5 @@ desktop.ini
 *.tmp
 *.bak
 *.log
+
+node_modules/

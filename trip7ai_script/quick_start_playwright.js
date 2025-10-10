@@ -59,12 +59,40 @@ function printConfigSummary(config) {
     console.log('\n' + '='.repeat(60));
     console.log('🎯 Playwright自动化下载任务配置');
     console.log('='.repeat(60));
-    console.log(`🌐 目标网站: ${config.websiteUrl}`);
+    console.log(`🔐 登录页面: ${config.websiteUrl}`);
+    if (config.targetUrl) {
+        console.log(`🎯 目标页面: ${config.targetUrl}`);
+    }
     console.log(`📋 下载项目数量: ${config.searchData.length}`);
     console.log(`🎛️  浏览器类型: ${config.downloaderConfig?.browserType || 'chromium'}`);
     console.log(`👁️  无头模式: ${config.downloaderConfig?.headless ? '是' : '否'}`);
     console.log(`📁 下载目录: ${config.downloaderConfig?.downloadDir || './downloads'}`);
     console.log(`🔄 重试次数: ${config.downloaderConfig?.retryAttempts || 3}`);
+    
+    // 显示登录配置状态
+    if (config.loginConfig) {
+        console.log(`🔐 登录功能: ${config.loginConfig.enabled ? '启用' : '禁用'}`);
+        if (config.loginConfig.enabled) {
+            console.log(`👤 用户名: ${config.loginConfig.username || '未配置'}`);
+            console.log(`🔑 密码: ${config.loginConfig.password ? '已配置' : '未配置'}`);
+            console.log(`🖐️ 手动登录: ${config.loginConfig.manualLogin ? '启用' : '禁用'}`);
+        console.log(`🍪 Cookie保存: ${config.loginConfig.useCookies ? '启用' : '禁用'}`);
+        
+        if (config.loginConfig.predefinedCookies && config.loginConfig.predefinedCookies.length > 0) {
+            console.log(`🍪 预定义Cookie: 已配置 ${config.loginConfig.predefinedCookies.length} 个`);
+        }
+        
+        if (config.loginConfig.manualLogin) {
+            console.log('   💡 手动登录模式：脚本会等待您在浏览器中完成登录');
+        }
+        if (config.loginConfig.useCookies) {
+            console.log('   💡 Cookie模式：登录信息会被保存，下次自动使用');
+        }
+        if (config.loginConfig.predefinedCookies && config.loginConfig.predefinedCookies.length > 0) {
+            console.log('   💡 预定义Cookie模式：将优先使用配置的Cookie进行登录');
+        }
+        }
+    }
     
     console.log('\n📋 下载项目预览:');
     const previewCount = Math.min(5, config.searchData.length);
@@ -151,7 +179,9 @@ async function main() {
         await downloader.batchDownload(
             config.websiteUrl,
             config.searchData,
-            config.selectors
+            config.selectors,
+            config.loginConfig,
+            config.targetUrl
         );
         
         // 关闭浏览器

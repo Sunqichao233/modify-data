@@ -1,0 +1,82 @@
+[
+  {
+    "name": "JSESSIONID",
+    "value": "B260FB1F32D4996E7E2CF622D7DEA191",
+    "domain": "www.trip7.ai",
+    "path": "/api",
+    "expires": -1,
+    "httpOnly": true,
+    "secure": false,
+    "sameSite": "Lax"
+  },
+  {
+    "name": "_gat_gtag_UA_157536383_1",
+    "value": "1",
+    "domain": ".trip7.ai",
+    "path": "/",
+    "expires": 1760076706,
+    "httpOnly": false,
+    "secure": false,
+    "sameSite": "Lax"
+  },
+  {
+    "name": "_ga_XXXXXXXXXX",
+    "value": "GA1.1.182599511.1739437676",
+    "domain": ".trip7.ai",
+    "path": "/",
+    "expires": -1,
+    "httpOnly": false,
+    "secure": false,
+    "sameSite": "Lax"
+  },
+  {
+    "name": "_gat",
+    "value": "GS2.1.s1760073188$o89$g1$t1760073239$j9$l0$h0",
+    "domain": ".trip7.ai",
+    "path": "/",
+    "expires": -1,
+    "httpOnly": false,
+    "secure": false,
+    "sameSite": "Lax"
+  },
+  {
+    "name": "_ga_YN6R4XG4VJ",
+    "value": "GA1.2.1312581103.1760055178",
+    "domain": ".trip7.ai",
+    "path": "/",
+    "expires": -1,
+    "httpOnly": false,
+    "secure": false,
+    "sameSite": "Lax"
+  },
+  {
+    "name": "_gid",
+    "value": "GA1.2.610439776.1760076651",
+    "domain": ".trip7.ai",
+    "path": "/",
+    "expires": 1760163050,
+    "httpOnly": false,
+    "secure": false,
+    "sameSite": "Lax"
+  },
+  {
+    "name": "_ga_3LX5CYTJ9B",
+    "value": "GS2.1.s1760076646$o1$g1$t1760076650$j56$l0$h0",
+    "domain": ".trip7.ai",
+    "path": "/",
+    "expires": 1794636650.799834,
+    "httpOnly": false,
+    "secure": false,
+    "sameSite": "Lax"
+  },
+  {
+    "name": "_ga",
+    "value": "GA1.1.140947117.1749184353",
+    "domain": ".trip7.ai",
+    "path": "/",
+    "expires": 1794636650.800325,
+    "httpOnly": false,
+    "secure": false,
+    "sameSite": "Lax"
+  }
+]
