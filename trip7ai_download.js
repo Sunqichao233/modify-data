@@ -1,41 +1,51 @@
-// 实现了批处理下载指定数据
+// 实现了批处理下载指定数据的脚本，并且实现命名为 userName#course.csv
+
+
 
 (async () => {
   console.log("🚀 Trip7 批量フィルター＆CSVダウンロード 開始");
+
+  // === 🆕 下载命名 Hook（非 Blob 方案）===
+  // 拦截 <a>.click()，当指向 blob: 时，自动设置下载文件名为 当前任务名.csv
+  // 这个方式不改动 Blob，兼容性更高，也不会引起递归/重复下载
+  (function injectDownloadRenameHook() {
+    if (window.__anchorClickPatched) return; // 防止重复注入
+    const OriginalAnchorClick = HTMLAnchorElement.prototype.click;
+    HTMLAnchorElement.prototype.click = function (...args) {
+      try {
+        // 只有在页面触发 blob 下载，且我们预先设置了当前文件名时才改名
+        if (this.href && this.href.startsWith("blob:") && window.__currentFileName) {
+          const expectExt = ".csv";
+          // 如果站点本身未设置 download 或设置成默认名，我们覆盖为 “userName#course.csv”
+          const desired = window.__currentFileName.endsWith(expectExt)
+            ? window.__currentFileName
+            : window.__currentFileName + expectExt;
+          this.setAttribute("download", desired);
+          console.log("📝 已设置下载文件名:", desired);
+        }
+      } catch (e) {
+        console.warn("⚠️ 下载命名 Hook 处理异常:", e);
+      }
+      return OriginalAnchorClick.apply(this, args);
+    };
+    window.__anchorClickPatched = true;
+    console.log("✅ 下载命名 Hook 已启用（非 Blob 方案）");
+  })();
 
   // === 🧩 在这里填写要批量下载的用户名与课程名 ===
   const tasks = [
     { user: "bestSolutions001", course: "AIプログラミング中級コース" },
     { user: "bestSolutions002", course: "AIプログラミング中級コース" },
-    { user: "bestSolutions003", course: "AIプログラミング中級コース" },
-    { user: "bestSolutions004", course: "AIプログラミング中級コース" },
-    { user: "bestSolutions005", course: "AIプログラミング中級コース" },
-    { user: "bestSolutions008", course: "AIプログラミング中級コース" },
-    { user: "bestSolutions009", course: "AIプログラミング中級コース" },
-    { user: "NovaSolutions001", course: "AIプログラミング中級コース" },
-    { user: "NovaSolutions002", course: "AIプログラミング中級コース" },
-    { user: "NovaSolutions003", course: "AIプログラミング中級コース" },
-    { user: "NovaSolutions004", course: "AIプログラミング中級コース" },
-    { user: "NovaSolutions005", course: "AIプログラミング中級コース" },
-    { user: "NovaSolutions006", course: "AIプログラミング中級コース" },
-    { user: "NovaSolutions008", course: "AIプログラミング中級コース" },
-    { user: "NovaSolutions010", course: "AIプログラミング中級コース" },
-    { user: "dynamics001", course: "AIプログラミング中級コース" },
-    { user: "dynamics002", course: "AIプログラミング中級コース" },
-    { user: "dynamics003", course: "AIプログラミング中級コース" },
-    { user: "dynamics004", course: "AIプログラミング中級コース" },
-    { user: "dynamics005", course: "AIプログラミング中級コース" },
-    { user: "dynamics006", course: "AIプログラミング中級コース" },
-    { user: "dynamics007", course: "AIプログラミング中級コース" },
-    { user: "dynamics008", course: "AIプログラミング中級コース" },
-    { user: "dynamics009", course: "AIプログラミング中級コース" },
-    { user: "dynamics010", course: "AIプログラミング中級コース" },
-    { user: "dynamics011", course: "AIプログラミング中級コース" }
+    { user: "bestSolutions003", course: "AIプログラミング中級コース" }
   ];
 
   // === 🧠 核心执行函数 ===
-  async function downloadOne(targetValue) {
+  async function downloadOne(targetValue, currentFileName) {
     console.log(`\n🚀 開始処理: ${targetValue}`);
+
+    // 🆕 将当前文件名保存到全局，供“下载命名 Hook”使用
+    // 约定命名：userName#categoryName.csv
+    window.__currentFileName = currentFileName;
 
     // Step 1. 打开“フィルター”面板
     const filterBtn = document.querySelector('button[aria-label="フィルター表示"]');
@@ -118,14 +128,20 @@
       return;
     }
 
+    // ⚠️ 关键：站点会在这里立刻创建 blob 并调用 a.click() 触发下载
+    // 我们上面注入的“下载命名 Hook”会在 a.click() 发生前把文件名改成 __currentFileName
     csvItem.click();
     console.log(`✅ CSVダウンロード をクリックしました -> ${targetValue}`);
+
+    // （可选）等待一小会儿，确保该次下载完成
+    await new Promise(r => setTimeout(r, 500));
   }
 
   // === 🚀 循环执行所有任务 ===
   for (const task of tasks) {
     const value = `${task.user}#${task.course}`;
-    await downloadOne(value);
+    const fileName = `${task.user}#${task.course}`; // 不带后缀，Hook 内部会补 ".csv"
+    await downloadOne(value, fileName);
     console.log(`⏳ 等待 6 秒后执行下一个...`);
     await new Promise(r => setTimeout(r, 6000)); // 每个任务间隔 6 秒
   }
