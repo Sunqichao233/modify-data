@@ -1,5 +1,7 @@
 # CSV 数据文件
 *.csv
+*.xlsx
+
 
 # CSV 目录
 csv/
