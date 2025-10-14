@@ -5,6 +5,8 @@ import os
 import glob
 import sys
 import codecs
+import re
+from collections import defaultdict
 
 # Windows控制台UTF-8编码支持
 if sys.platform == 'win32':
@@ -130,11 +132,173 @@ def check_data_count(file_path, df):
     
     return True, course_name, actual_count, required_count, 0
 
+# 提取模块中的章节号
+def extract_chapter_number(module_str):
+    """
+    从模块名中提取章节号
+    例如："第1章" -> 1, "第二章" -> 2
+    """
+    if pd.isna(module_str):
+        return None
+    
+    module_str = str(module_str).strip()
+    
+    # 匹配数字章节：第1章、第2章等
+    match = re.search(r'第(\d+)章', module_str)
+    if match:
+        return int(match.group(1))
+    
+    # 匹配汉字数字章节：第一章、第二章等
+    chinese_numbers = {
+        '一': 1, '二': 2, '三': 3, '四': 4, '五': 5,
+        '六': 6, '七': 7, '八': 8, '九': 9, '十': 10
+    }
+    
+    for chinese, number in chinese_numbers.items():
+        if f'第{chinese}章' in module_str:
+            return number
+    
+    return None
+
+# 提取课程的基础名称和序号
+def extract_lesson_base_and_number(lesson_str):
+    """
+    从课程名中提取基础名称和序号
+    例如："pandasのデータ変形（1）" -> ("pandasのデータ変形", 1)
+         "Nullable型（２）" -> ("Nullable型", 2)
+    返回：(基础名称, 序号) 或 (None, None)
+    """
+    if pd.isna(lesson_str):
+        return None, None
+    
+    lesson_str = str(lesson_str).strip()
+    
+    # 匹配日文括号中的数字：（1）、（2）等
+    match = re.search(r'(.+?)（(\d+)）', lesson_str)
+    if match:
+        base_name = match.group(1).strip()
+        number = int(match.group(2))
+        return base_name, number
+    
+    # 匹配英文括号中的数字：(1)、(2)等
+    match = re.search(r'(.+?)\((\d+)\)', lesson_str)
+    if match:
+        base_name = match.group(1).strip()
+        number = int(match.group(2))
+        return base_name, number
+    
+    return None, None
+
+# 检查模块顺序
+def check_module_order(df):
+    """
+    检查模块中章节的顺序是否正确
+    返回：问题列表 [(行号, 问题描述), ...]
+    """
+    issues = []
+    
+    if 'モジュール' not in df.columns:
+        return issues
+    
+    # 提取章节号并记录原始行号
+    chapter_data = []
+    for idx, row in df.iterrows():
+        chapter_num = extract_chapter_number(row['モジュール'])
+        if chapter_num is not None:
+            chapter_data.append((idx, chapter_num, row['モジュール']))
+    
+    if not chapter_data:
+        return issues
+    
+    # 检查章节顺序
+    prev_chapter = 0
+    
+    for idx, chapter_num, module_name in chapter_data:
+        if chapter_num > prev_chapter + 1:
+            # 跳章了
+            issues.append((idx, f"モジュール順序エラー：第{prev_chapter}章の後に第{chapter_num}章が出現（{module_name}）"))
+        elif chapter_num < prev_chapter:
+            # 章节倒退了
+            issues.append((idx, f"モジュール順序エラー：第{chapter_num}章が第{prev_chapter}章の後に出現（{module_name}）"))
+        
+        if chapter_num > prev_chapter:
+            prev_chapter = chapter_num
+    
+    return issues
+
+# 检查课程顺序（修正版）
+def check_lesson_order(df):
+    """
+    检查同一系列课程中序号的顺序是否正确
+    只检查同一基础名称的课程序号顺序
+    返回：问题列表 [(行号, 问题描述), ...]
+    """
+    issues = []
+    
+    if 'レッスン' not in df.columns:
+        return issues
+    
+    # 按模块分组检查课程顺序
+    if 'モジュール' in df.columns:
+        for module_name, group in df.groupby('モジュール'):
+            # 收集同一模块内的课程信息
+            lesson_series = defaultdict(list)  # {基础名称: [(行号, 序号, 完整名称), ...]}
+            
+            for idx, row in group.iterrows():
+                base_name, lesson_num = extract_lesson_base_and_number(row['レッスン'])
+                if base_name is not None and lesson_num is not None:
+                    lesson_series[base_name].append((idx, lesson_num, row['レッスン']))
+            
+            # 检查每个系列的顺序
+            for base_name, lessons in lesson_series.items():
+                if len(lessons) <= 1:
+                    continue
+                
+                # 按原始行号排序（保持在CSV中的出现顺序）
+                lessons.sort(key=lambda x: x[0])
+                
+                # 检查序号是否递增
+                for i in range(1, len(lessons)):
+                    prev_idx, prev_num, prev_name = lessons[i-1]
+                    curr_idx, curr_num, curr_name = lessons[i]
+                    
+                    if curr_num <= prev_num:
+                        issues.append((curr_idx, f"レッスン順序エラー：{base_name}シリーズで（{curr_num}）が（{prev_num}）の後に出現（{curr_name}）"))
+                    elif curr_num > prev_num + 1:
+                        # 可选：检查是否跳号（如果需要严格连续的话）
+                        # issues.append((curr_idx, f"レッスン順序警告：{base_name}シリーズで（{prev_num}）の後に（{curr_num}）が出現、連続していない（{curr_name}）"))
+                        pass
+    else:
+        # 没有模块列，直接检查整个文件的课程顺序
+        lesson_series = defaultdict(list)
+        
+        for idx, row in df.iterrows():
+            base_name, lesson_num = extract_lesson_base_and_number(row['レッスン'])
+            if base_name is not None and lesson_num is not None:
+                lesson_series[base_name].append((idx, lesson_num, row['レッスン']))
+        
+        # 检查每个系列的顺序
+        for base_name, lessons in lesson_series.items():
+            if len(lessons) <= 1:
+                continue
+            
+            lessons.sort(key=lambda x: x[0])
+            
+            for i in range(1, len(lessons)):
+                prev_idx, prev_num, prev_name = lessons[i-1]
+                curr_idx, curr_num, curr_name = lessons[i]
+                
+                if curr_num <= prev_num:
+                    issues.append((curr_idx, f"レッスン順序エラー：{base_name}シリーズで（{curr_num}）が（{prev_num}）の後に出現（{curr_name}）"))
+    
+    return issues
+
 # 读取文件夹内所有 CSV
 csv_files = glob.glob(os.path.join(folder_path, "*.csv"))
 
 problematic_files = []
-insufficient_data_files = []  # 新增：数据量不足的文件
+insufficient_data_files = []  # 数据量不足的文件
+order_issue_files = []  # 顺序问题的文件
 
 for file_path in csv_files:
     try:
@@ -143,7 +307,7 @@ for file_path in csv_files:
         # 兜底尝试默认编码
         df = pd.read_csv(file_path)
 
-    # 新增：检查数据量
+    # 检查数据量
     is_sufficient, course_name, actual_count, required_count, missing_count = check_data_count(file_path, df)
     if not is_sufficient:
         insufficient_data_files.append({
@@ -153,14 +317,28 @@ for file_path in csv_files:
             'required': required_count,
             'missing': missing_count
         })
-        print(f"数据量不足：文件 {os.path.basename(file_path)} (课程: {course_name}) 实际数据 {actual_count} 条，要求 {required_count} 条，缺少 {missing_count} 条")
+        print(f"データ量不足：ファイル {os.path.basename(file_path)} (コース: {course_name}) 実際データ {actual_count} 件、要求 {required_count} 件、不足 {missing_count} 件")
 
-    # 缺失必须列时跳过
+    # 检查顺序
+    module_issues = check_module_order(df)
+    lesson_issues = check_lesson_order(df)
+    
+    order_issues = module_issues + lesson_issues
+    if order_issues:
+        order_issue_files.append(os.path.basename(file_path))
+        print(f"\n=== ファイル {os.path.basename(file_path)} の順序チェック結果 ===")
+        for idx, issue_desc in order_issues:
+            print(f"順序問題：第 {idx + 1} 行 - {issue_desc}")
+    else:
+        print(f"\n=== ファイル {os.path.basename(file_path)} の順序チェック結果 ===")
+        print("順序問題なし")
+
+    # 缺失必须列时跳过时间相关检查
     required_cols = ['視聴開始時間', '視聴完了時間', '標準視聴時間']
-    for col in required_cols:
-        if col not in df.columns:
-            print(f"文件 {os.path.basename(file_path)} 缺少必要列：{col}，已跳过。")
-            continue
+    missing_cols = [col for col in required_cols if col not in df.columns]
+    if missing_cols:
+        print(f"ファイル {os.path.basename(file_path)} 必要列不足：{', '.join(missing_cols)}、データ品質チェックをスキップ。")
+        continue
 
     # 计算标准观看分钟
     df['標準視聴時間_分'] = df['標準視聴時間'].apply(time_to_minutes)
@@ -171,7 +349,7 @@ for file_path in csv_files:
     df['_date_only'] = df['_start_dt'].apply(lambda x: x.date() if pd.notna(x) else None)
     df['_orig_idx'] = df.index
 
-    # 为了“条件2 同一天上一条结束 < 下一条开始”正确，按开始时间排序
+    # 为了"条件2 同一天上一条结束 < 下一条开始"正确，按开始时间排序
     work = df.sort_values(by=['_date_only', '_start_dt'], kind='mergesort').reset_index(drop=True)
 
     issues = set()
@@ -235,7 +413,7 @@ for file_path in csv_files:
     for idx, reason in issues:
         # 允许多条原因覆盖；这里仅写一个标记，控制台打印详细原因
         df.at[idx, 'Highlight'] = 'background-color: red'
-        print(f"文件 {os.path.basename(file_path)} 的第 {idx + 1} 行存在问题：{reason}")
+        print(f"ファイル {os.path.basename(file_path)} の第 {idx + 1} 行に問題：{reason}")
 
     # 清理工作列
     for col in ['_start_dt', '_end_dt', '_date_only', '_orig_idx']:
@@ -246,22 +424,30 @@ for file_path in csv_files:
     df.to_csv(file_path, index=False, encoding='utf-8-sig')
 
 # 汇总输出
-print("\n=== 数据质量检查结果 ===")
+print("\n=== データ品質チェック結果 ===")
 if problematic_files:
-    print("\n以下文件存在数据质量问题：")
+    print("\n以下のファイルにデータ品質問題があります：")
     for f in problematic_files:
         print(f"- {f}")
 else:
-    print("所有文件数据质量均正常。")
+    print("すべてのファイルのデータ品質は正常です。")
 
-print("\n=== 数据量检查结果 ===")
+print("\n=== データ量チェック結果 ===")
 if insufficient_data_files:
-    print("\n以下文件数据量不足：")
+    print("\n以下のファイルのデータ量が不足しています：")
     for file_info in insufficient_data_files:
-        print(f"- {file_info['file']} (课程: {file_info['course']}) - 实际: {file_info['actual']} 条，要求: {file_info['required']} 条，缺少: {file_info['missing']} 条")
+        print(f"- {file_info['file']} (コース: {file_info['course']}) - 実際: {file_info['actual']} 件、要求: {file_info['required']} 件、不足: {file_info['missing']} 件")
 else:
-    print("所有文件数据量均满足要求。")
+    print("すべてのファイルのデータ量は要求を満たしています。")
 
-print("\n=== 课程数据量要求配置 ===")
+print("\n=== 順序チェック結果 ===")
+if order_issue_files:
+    print("\n以下のファイルに順序問題があります：")
+    for f in order_issue_files:
+        print(f"- {f}")
+else:
+    print("すべてのファイルの順序は正常です。")
+
+print("\n=== コースデータ量要求設定 ===")
 for course, count in course_requirements.items():
-    print(f"- {course}: {count} 条")
+    print(f"- {course}: {count} 件")
