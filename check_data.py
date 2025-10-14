@@ -14,6 +14,20 @@ if sys.platform == 'win32':
 folder_path = "csv"
 # ======================================
 
+# ========= 可配置：课程数据量要求 =========
+# 格式：{"课程名": 要求的数据条数}
+course_requirements = {
+    "AIサーバー構築実戦コース": 32,
+    "AIデータ分析中級コース": 41,
+    "AIデータサイエンス中級コース": 41,
+    "AIプログラミング中級コース": 43,
+    "AIプログラミング基礎コース": 46,
+    "AIサーバー構築基礎コース": 32,
+    "AIサーバーのDX化活用実戦コース": 25,
+    "大規模言語モデル": 32,
+}
+# ======================================
+
 # ---- 通用：时间解析（兼容横杠/斜杠，带/不带秒） ----
 def parse_dt(s):
     if pd.isna(s):
@@ -68,10 +82,59 @@ def is_weekday_jp(date_obj):
         # 处理 NaN 或其他无效值
         return False
 
+# 从文件名或CSV内容中提取课程名
+def extract_course_name(file_path, df):
+    """
+    尝试从文件名或CSV内容中提取课程名
+    优先级：1. 文件名匹配 2. CSV中的课程列
+    """
+    filename = os.path.basename(file_path)
+    
+    # 方法1：从文件名中匹配课程名
+    for course in course_requirements.keys():
+        if course in filename:
+            return course
+    
+    # 方法2：检查CSV中是否有课程相关的列
+    course_columns = ['コース名', 'course', 'Course', '课程名', '課程名']
+    for col in course_columns:
+        if col in df.columns:
+            # 取第一个非空值作为课程名
+            course_values = df[col].dropna().unique()
+            if len(course_values) > 0:
+                course_name = str(course_values[0])
+                # 检查是否匹配配置中的课程
+                for req_course in course_requirements.keys():
+                    if req_course in course_name or course_name in req_course:
+                        return req_course
+    
+    return None
+
+# 检查数据量是否足够
+def check_data_count(file_path, df):
+    """
+    检查CSV文件的数据量是否满足课程要求
+    返回：(是否满足, 课程名, 实际数量, 要求数量, 缺少数量)
+    """
+    course_name = extract_course_name(file_path, df)
+    
+    if course_name is None:
+        return True, None, len(df), 0, 0  # 未匹配到课程，不检查
+    
+    required_count = course_requirements.get(course_name, 0)
+    actual_count = len(df)
+    
+    if actual_count < required_count:
+        missing_count = required_count - actual_count
+        return False, course_name, actual_count, required_count, missing_count
+    
+    return True, course_name, actual_count, required_count, 0
+
 # 读取文件夹内所有 CSV
 csv_files = glob.glob(os.path.join(folder_path, "*.csv"))
 
 problematic_files = []
+insufficient_data_files = []  # 新增：数据量不足的文件
 
 for file_path in csv_files:
     try:
@@ -79,6 +142,18 @@ for file_path in csv_files:
     except UnicodeDecodeError:
         # 兜底尝试默认编码
         df = pd.read_csv(file_path)
+
+    # 新增：检查数据量
+    is_sufficient, course_name, actual_count, required_count, missing_count = check_data_count(file_path, df)
+    if not is_sufficient:
+        insufficient_data_files.append({
+            'file': os.path.basename(file_path),
+            'course': course_name,
+            'actual': actual_count,
+            'required': required_count,
+            'missing': missing_count
+        })
+        print(f"数据量不足：文件 {os.path.basename(file_path)} (课程: {course_name}) 实际数据 {actual_count} 条，要求 {required_count} 条，缺少 {missing_count} 条")
 
     # 缺失必须列时跳过
     required_cols = ['視聴開始時間', '視聴完了時間', '標準視聴時間']
@@ -171,9 +246,22 @@ for file_path in csv_files:
     df.to_csv(file_path, index=False, encoding='utf-8-sig')
 
 # 汇总输出
+print("\n=== 数据质量检查结果 ===")
 if problematic_files:
-    print("\n以下文件存在问题：")
+    print("\n以下文件存在数据质量问题：")
     for f in problematic_files:
         print(f"- {f}")
 else:
-    print("所有文件均无问题。")
+    print("所有文件数据质量均正常。")
+
+print("\n=== 数据量检查结果 ===")
+if insufficient_data_files:
+    print("\n以下文件数据量不足：")
+    for file_info in insufficient_data_files:
+        print(f"- {file_info['file']} (课程: {file_info['course']}) - 实际: {file_info['actual']} 条，要求: {file_info['required']} 条，缺少: {file_info['missing']} 条")
+else:
+    print("所有文件数据量均满足要求。")
+
+print("\n=== 课程数据量要求配置 ===")
+for course, count in course_requirements.items():
+    print(f"- {course}: {count} 条")
