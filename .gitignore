@@ -1,7 +1,10 @@
 # CSV 数据文件
 *.csv
 *.xlsx
-
+*.pptx
+*.mp4
+*.jpeg
+*.png
 
 # CSV 目录
 csv/

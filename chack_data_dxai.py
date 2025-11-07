@@ -6,7 +6,7 @@ import glob
 import math
 
 # ========= 可配置：CSV 文件夹路径 =========
-folder_path = r"C:\Users\softusing\Desktop\trip7.ai改数据相关\check\csv"
+folder_path = r"C:\Users\user\Desktop\modify-data\csv\dxai"
 # ======================================
 
 # ---- 通用：时间解析（自动兼容 yyyy/m/d h:mm、是否带秒、斜杠/横杠） ----
@@ -72,7 +72,10 @@ def is_weekday_jp(date_obj):
 
 # 读取文件夹内所有 CSV
 csv_files = glob.glob(os.path.join(folder_path, "*.csv"))
-
+# 新增：输出检查文件清单
+print(f"一共检查的文件有：{len(csv_files)} 个")
+for fp in csv_files:
+    print(f"- {os.path.basename(fp)}")
 problematic_files = []
 
 for file_path in csv_files:
