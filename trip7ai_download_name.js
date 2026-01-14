@@ -34,16 +34,16 @@
 
   // === 🧩 在这里填写要批量下载的用户名与课程名 ===
 const tasks = [
-  { user: "softusing0169", course: "大規模言語モデルによるAIチャットボット開発" },
-  { user: "softusing0171", course: "大規模言語モデルによるAIチャットボット開発" },
-  { user: "softusing0336", course: "大規模言語モデルによるAIチャットボット開発" },
-  { user: "softusing0555", course: "大規模言語モデルによるAIチャットボット開発" },
-  { user: "softusing0559", course: "大規模言語モデルによるAIチャットボット開発" },
-  { user: "softusing575",  course: "大規模言語モデルによるAIチャットボット開発" },
-  { user: "softusing0594", course: "大規模言語モデルによるAIチャットボット開発" },
-  { user: "softusing627",  course: "大規模言語モデルによるAIチャットボット開発" },
-  { user: "softusing0525", course: "大規模言語モデルによるAIチャットボット開発" },
-  { user: "softusing14",   course: "大規模言語モデルによるAIチャットボット開発" }
+  { user: "姚彬", course: "大規模言語モデルによるAIチャットボット開発" },
+  { user: "李揚", course: "大規模言語モデルによるAIチャットボット開発" },
+  { user: "王保輝", course: "大規模言語モデルによるAIチャットボット開発" },
+  { user: "張　璐", course: "大規模言語モデルによるAIチャットボット開発" },
+  { user: "林　賀", course: "大規模言語モデルによるAIチャットボット開発" },
+  { user: "賀俊傑", course: "大規模言語モデルによるAIチャットボット開発" },
+  { user: "任暁", course: "大規模言語モデルによるAIチャットボット開発" },
+  { user: "王梓涵", course: "大規模言語モデルによるAIチャットボット開発" },
+  { user: "万　秋麟", course: "大規模言語モデルによるAIチャットボット開発" },
+  { user: "郭　向兵", course: "大規模言語モデルによるAIチャットボット開発" }
 ];
 
 
@@ -68,7 +68,7 @@ const tasks = [
     let selectCol, selectOp, inputBox;
     for (let i = 0; i < 60; i++) {
       selectCol = [...document.querySelectorAll("select")].find(s =>
-        [...s.options].some(opt => opt.value === "userName#categoryName")
+        [...s.options].some(opt => opt.value === "nickName#categoryName")
       );
       selectOp = [...document.querySelectorAll("select")].find(s =>
         [...s.options].some(opt => opt.value === "contains")

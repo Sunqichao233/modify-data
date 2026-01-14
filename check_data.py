@@ -13,7 +13,7 @@ if sys.platform == 'win32':
     sys.stdout = codecs.getwriter("utf-8")(sys.stdout.detach())
 
 # ========= 可配置：CSV 文件夹路径 =========
-folder_path = "csv"
+folder_path = r"C:\Users\user\Desktop\modify-data\csv\itschool"
 # ======================================
 
 # ========= 可配置：课程数据量要求 =========
@@ -27,6 +27,7 @@ course_requirements = {
     "AIサーバー構築基礎コース": 32,
     "AIサーバーのDX化活用実戦コース": 25,
     "大規模言語モデル": 32,
+    "React中級コース": 32,
     "生成AI活用スキル習得（ChatGPT）": 44,
 }
 # ======================================
