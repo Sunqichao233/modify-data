@@ -21,6 +21,7 @@ folder_path = r"C:\Users\user\Desktop\modify-data\csv\itschool"
 course_requirements = {
     "AIサーバー構築実戦コース": 32,
     "AIデータ分析中級コース": 41,
+    "AIデータ分析基礎コース": 43,
     "AIデータサイエンス中級コース": 41,
     "AIプログラミング中級コース": 43,
     "AIプログラミング基礎コース": 46,
@@ -29,6 +30,7 @@ course_requirements = {
     "大規模言語モデル": 32,
     "React中級コース": 32,
     "生成AI活用スキル習得（ChatGPT）": 44,
+    "大規模言語モデルによるAIチャットボット開発": 32
 }
 # ======================================
 
