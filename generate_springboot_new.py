@@ -105,6 +105,52 @@ def pick_random_worktime_before(cutoff: date, rng: random.Random) -> datetime:
         return base + timedelta(minutes=minute)
 
 
+def pick_random_worktime_in_range(start_d: date, end_d: date, rng: random.Random) -> datetime:
+    """在 [start_d, end_d] 区间内随机选择一个工作日，并随机在
+    - 上午 9:00–10:30（随机分钟）或
+    - 下午 13:00–16:30（随机分钟）
+    之间取一个时间。
+    若区间内没有工作日，则回退到 start_d 最近的工作日。
+    """
+    if start_d > end_d:
+        start_d, end_d = end_d, start_d
+    candidates = []
+    cur = start_d
+    while cur <= end_d:
+        if is_weekday(cur):
+            candidates.append(cur)
+        cur += timedelta(days=1)
+    if not candidates:
+        d = start_d
+        while d.weekday() >= 5:
+            d = d + timedelta(days=1)
+        candidates = [d]
+
+    chosen = rng.choice(candidates)
+    if rng.randint(0, 1) == 0:  # 上午
+        minute = rng.randint(0, 90)
+        base = datetime.combine(chosen, time(9, 0))
+        return base + timedelta(minutes=minute)
+    else:  # 下午
+        minute = rng.randint(0, 210)
+        base = datetime.combine(chosen, time(13, 0))
+        return base + timedelta(minutes=minute)
+
+
+def pick_random_worktime_on_day(chosen: date, rng: random.Random) -> datetime:
+    """在指定工作日 chosen 内随机选择一个时间点：
+    - 上午 9:00–10:30 或 下午 13:00–16:30
+    """
+    if rng.randint(0, 1) == 0:  # 上午
+        minute = rng.randint(0, 90)
+        base = datetime.combine(chosen, time(9, 0))
+        return base + timedelta(minutes=minute)
+    else:  # 下午
+        minute = rng.randint(0, 210)
+        base = datetime.combine(chosen, time(13, 0))
+        return base + timedelta(minutes=minute)
+
+
 def apply_excel_like_rule(prev_next_started_at: datetime, prev_rest_min: int, rng: random.Random) -> datetime:
     """实现题述 Excel 规则，得到本行 new_started_at_UTC：
     以 candidate = prev_next_started_at + prev_rest_min。
@@ -206,7 +252,10 @@ def main():
     # 兼容旧含义：此前 --count 表示总行数；现在优先使用 --sets 表示份数
     parser.add_argument('--sets', type=int, default=22, help='生成份数，默认22')
     parser.add_argument('--count', type=int, default=None, help='兼容参数；若提供则视为份数')
-    parser.add_argument('--cutoff', default='2025/12/12', help='截止日期，形如 2025/12/12')
+    # 首条开始时间范围（默认 2025/12/01 到 2025/12/12）
+    parser.add_argument('--first-range', default='2025/12/01,2025/12/12', help='首条开始日期范围，格式 start,end')
+    # 最晚完成日期（默认 2025/12/19），所有 next_started_at 不得超过该日期（当天23:59）
+    parser.add_argument('--deadline', default='2025/12/19', help='全体完成不超过此日期（含当天）')
     parser.add_argument('--seed', type=int, default=1234)
     parser.add_argument('--video-ids', default=None, help='32个video_id，逗号或空白分隔；若缺省则从CSV读取')
     parser.add_argument('--course-ids', default=None, help='与video_id一一对应；若缺省则从CSV映射')
@@ -290,71 +339,165 @@ def main():
                 raise RuntimeError(f'CSV中未找到 video_id={v} 的课程时长 course_video_length')
             lengths_strs.append(vid_to_len[v])
 
-    cutoff_dt = datetime.strptime(args.cutoff, "%Y/%m/%d").date()
+    # 解析首条开始日期范围与截稿日期
+    try:
+        first_range_tokens = [t.strip() for t in args.first_range.split(',')]
+        if len(first_range_tokens) != 2:
+            raise ValueError
+        first_start_date = datetime.strptime(first_range_tokens[0], "%Y/%m/%d").date()
+        first_end_date = datetime.strptime(first_range_tokens[1], "%Y/%m/%d").date()
+    except Exception:
+        raise RuntimeError('参数 --first-range 格式错误，应为 YYYY/MM/DD,YYYY/MM/DD')
+
+    deadline_date = datetime.strptime(args.deadline, "%Y/%m/%d").date()
+    deadline_dt = datetime.combine(deadline_date, time(23, 59, 59))
 
     # 份数确定
     sets_count = args.sets if args.count is None else args.count
+
+    # 计算范围内的工作日列表，并做均匀随机分配到每份以减少集中落到某一天
+    candidate_days = []
+    cur_day = first_start_date
+    while cur_day <= first_end_date:
+        if is_weekday(cur_day):
+            candidate_days.append(cur_day)
+        cur_day += timedelta(days=1)
+    if not candidate_days:
+        raise RuntimeError('指定范围内没有工作日可用')
+
+    assigned_days = []
+    while len(assigned_days) < sets_count:
+        block = list(candidate_days)
+        rng.shuffle(block)
+        assigned_days.extend(block)
+    assigned_days = assigned_days[:sets_count]
 
     def make_row_template():
         return {name: '' for name in header_norm}
 
     out_rows = []
     for s in range(sets_count):
-        # 每份的第一条：随机工作日时间（在截止日前）
-        first_start_utc = pick_random_worktime_before(cutoff_dt, rng)
-        first_len_min = parse_hms_to_minutes(lengths_strs[0])
-        first_next = first_start_utc + timedelta(minutes=first_len_min)
-        first_rest = rng.randint(2, 6)
+        # 多次尝试以确保最终不超过 deadline
+        max_attempts = 200
+        generated_rows = None
+        for _attempt in range(max_attempts):
+            # 第一条：在分配到的工作日中随机时间
+            first_day = assigned_days[s]
+            first_start_utc = pick_random_worktime_on_day(first_day, rng)
+            first_len_min = parse_hms_to_minutes(lengths_strs[0])
+            first_next = first_start_utc + timedelta(minutes=first_len_min)
+            first_rest = rng.randint(2, 6)
 
-        # 第1条
-        r1 = make_row_template()
-        r1['disabled'] = '0'
-        r1['seq'] = '0'
-        r1['verify'] = '0'
-        r1['is_finished'] = '0'
-        r1['video_id'] = vid_list[0]
-        r1['course_id'] = cid_list[0]
-        r1['course_video_length'] = lengths_strs[0]
-        r1['new_started_at_UTC'] = format_dt(first_start_utc)
-        r1['next_started_at'] = format_dt(first_next)
-        r1['rest_time'] = str(first_rest)
+            trial_rows = []
+            # 第1条
+            r1 = make_row_template()
+            r1['disabled'] = '0'
+            r1['seq'] = '0'
+            r1['verify'] = '0'
+            r1['is_finished'] = '0'
+            r1['video_id'] = vid_list[0]
+            r1['course_id'] = cid_list[0]
+            r1['course_video_length'] = lengths_strs[0]
+            r1['new_started_at_UTC'] = format_dt(first_start_utc)
+            r1['next_started_at'] = format_dt(first_next)
+            r1['rest_time'] = str(first_rest)
+            # 复制到旧列
+            r1['started_at'] = r1['new_started_at_UTC']
+            r1['first_finished_time'] = r1['next_started_at']
 
-        out_row1 = [''] * len(header)
-        for i, col in enumerate(header_norm):
-            out_row1[i] = r1.get(col, '')
-        out_rows.append(out_row1)
-
-        prev_next = first_next
-        prev_rest = first_rest
-
-        # 后续31条，逐行按Excel规则推进
-        for j in range(1, len(vid_list)):
-            start_utc = apply_excel_like_rule(prev_next, prev_rest, rng)
-            row_len_min = parse_hms_to_minutes(lengths_strs[j])
-            next_utc = start_utc + timedelta(minutes=row_len_min)
-            rest = rng.randint(2, 6)
-
-            r = make_row_template()
-            r['disabled'] = '0'
-            r['seq'] = '0'
-            r['verify'] = '0'
-            r['is_finished'] = '0'
-            r['video_id'] = vid_list[j]
-            r['course_id'] = cid_list[j]
-            r['course_video_length'] = lengths_strs[j]
-            r['new_started_at_UTC'] = format_dt(start_utc)
-            r['next_started_at'] = format_dt(next_utc)
-            r['rest_time'] = str(rest)
-
-            out_row = [''] * len(header)
+            out_row1 = [''] * len(header)
             for i, col in enumerate(header_norm):
-                out_row[i] = r.get(col, '')
-            out_rows.append(out_row)
+                out_row1[i] = r1.get(col, '')
+            trial_rows.append(out_row1)
 
-            prev_next = next_utc
-            prev_rest = rest
+            prev_next = first_next
+            prev_rest = first_rest
 
-        # 组之间空一行（最后一组之后不再插入）
+            # 后续31条
+            for j in range(1, len(vid_list)):
+                start_utc = apply_excel_like_rule(prev_next, prev_rest, rng)
+                row_len_min = parse_hms_to_minutes(lengths_strs[j])
+                next_utc = start_utc + timedelta(minutes=row_len_min)
+                rest = rng.randint(2, 6)
+
+                r = make_row_template()
+                r['disabled'] = '0'
+                r['seq'] = '0'
+                r['verify'] = '0'
+                r['is_finished'] = '0'
+                r['video_id'] = vid_list[j]
+                r['course_id'] = cid_list[j]
+                r['course_video_length'] = lengths_strs[j]
+                r['new_started_at_UTC'] = format_dt(start_utc)
+                r['next_started_at'] = format_dt(next_utc)
+                r['rest_time'] = str(rest)
+                # 复制到旧列
+                r['started_at'] = r['new_started_at_UTC']
+                r['first_finished_time'] = r['next_started_at']
+
+                out_row = [''] * len(header)
+                for i, col in enumerate(header_norm):
+                    out_row[i] = r.get(col, '')
+                trial_rows.append(out_row)
+
+                prev_next = next_utc
+                prev_rest = rest
+
+            # 检查最后一个 next_started_at 是否不超过截止日期
+            if prev_next <= deadline_dt:
+                generated_rows = trial_rows
+                break
+
+        if generated_rows is None:
+            # 回退：使用范围起始日的 9:00 作为首条起点再生成一次（尽量满足约束）
+            first_start_utc = datetime.combine(first_start_date, time(9, 0))
+            first_len_min = parse_hms_to_minutes(lengths_strs[0])
+            first_next = first_start_utc + timedelta(minutes=first_len_min)
+            first_rest = 2
+
+            trial_rows = []
+            r1 = make_row_template()
+            r1['disabled'] = '0'
+            r1['seq'] = '0'
+            r1['verify'] = '0'
+            r1['is_finished'] = '0'
+            r1['video_id'] = vid_list[0]
+            r1['course_id'] = cid_list[0]
+            r1['course_video_length'] = lengths_strs[0]
+            r1['new_started_at_UTC'] = format_dt(first_start_utc)
+            r1['next_started_at'] = format_dt(first_next)
+            r1['rest_time'] = str(first_rest)
+            out_row1 = [''] * len(header)
+            for i, col in enumerate(header_norm):
+                out_row1[i] = r1.get(col, '')
+            trial_rows.append(out_row1)
+            prev_next = first_next
+            prev_rest = first_rest
+            for j in range(1, len(vid_list)):
+                start_utc = apply_excel_like_rule(prev_next, prev_rest, rng)
+                row_len_min = parse_hms_to_minutes(lengths_strs[j])
+                next_utc = start_utc + timedelta(minutes=row_len_min)
+                rest = 2
+                r = make_row_template()
+                r['disabled'] = '0'
+                r['seq'] = '0'
+                r['verify'] = '0'
+                r['is_finished'] = '0'
+                r['video_id'] = vid_list[j]
+                r['course_id'] = cid_list[j]
+                r['course_video_length'] = lengths_strs[j]
+                r['new_started_at_UTC'] = format_dt(start_utc)
+                r['next_started_at'] = format_dt(next_utc)
+                r['rest_time'] = str(rest)
+                out_row = [''] * len(header)
+                for i, col in enumerate(header_norm):
+                    out_row[i] = r.get(col, '')
+                trial_rows.append(out_row)
+                prev_next = next_utc
+                prev_rest = rest
+            generated_rows = trial_rows
+
+        out_rows.extend(generated_rows)
         if s != sets_count - 1:
             out_rows.append([''] * len(header))
 
