@@ -13,7 +13,8 @@ if sys.platform == 'win32':
     sys.stdout = codecs.getwriter("utf-8")(sys.stdout.detach())
 
 # ========= 可配置：CSV 文件夹路径 =========
-folder_path = r"C:\Users\user\Desktop\modify-data\csv\itschool"
+base_dir = os.path.dirname(os.path.abspath(__file__))
+folder_path = os.path.join(base_dir, "csv", "itschool")
 # ======================================
 
 # ========= 可配置：课程数据量要求 =========

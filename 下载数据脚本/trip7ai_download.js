@@ -33,17 +33,27 @@
   })();
 
   // === 🧩 在这里填写要批量下载的用户名与课程名 ===
-const tasks = [
-  { user: "summittechnic007", course: "AIデータ分析基礎コース" },
-  { user: "summittechnic008", course: "AIデータ分析基礎コース" },
-  { user: "summittechnic068", course: "AIデータ分析基礎コース" },
-  { user: "summittechnic069", course: "AIデータ分析基礎コース" },
-  { user: "summittechnic070", course: "AIデータ分析基礎コース" },
-  { user: "summittechnic071", course: "AIデータ分析基礎コース" },
-  { user: "SunInfo008", course: "AIデータ分析基礎コース" },
-  { user: "SunInfo009", course: "AIデータ分析基礎コース" },
-  { user: "summittechnic072", course: "AIデータ分析基礎コース" }
-];
+  const tasks = [
+    { user: "softusing065", course: "大規模言語モデルによるAIチャットボット開発" },
+    { user: "softusing066", course: "大規模言語モデルによるAIチャットボット開発" },
+    { user: "softusing068", course: "大規模言語モデルによるAIチャットボット開発" },
+    { user: "softusing070", course: "大規模言語モデルによるAIチャットボット開発" },
+    { user: "softusing071", course: "大規模言語モデルによるAIチャットボット開発" },
+    { user: "softusing073", course: "大規模言語モデルによるAIチャットボット開発" },
+    { user: "softusing074", course: "大規模言語モデルによるAIチャットボット開発" },
+    { user: "softusing076", course: "大規模言語モデルによるAIチャットボット開発" },
+    { user: "softusing077", course: "大規模言語モデルによるAIチャットボット開発" },
+    { user: "softusing078", course: "大規模言語モデルによるAIチャットボット開発" },
+    { user: "softusing079", course: "大規模言語モデルによるAIチャットボット開発" },
+    { user: "softusing080", course: "大規模言語モデルによるAIチャットボット開発" },
+    { user: "softusing081", course: "大規模言語モデルによるAIチャットボット開発" },
+    { user: "softusing082", course: "大規模言語モデルによるAIチャットボット開発" },
+    { user: "softusing083", course: "大規模言語モデルによるAIチャットボット開発" },
+    { user: "softusing084", course: "大規模言語モデルによるAIチャットボット開発" },
+    { user: "softusing086", course: "大規模言語モデルによるAIチャットボット開発" },
+    { user: "softusing087", course: "大規模言語モデルによるAIチャットボット開発" },
+    { user: "softusing049", course: "AIサーバー構築実戦コース" }
+  ];
 
 
   // === 🧠 核心执行函数 ===
