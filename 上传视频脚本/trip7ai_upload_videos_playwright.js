@@ -24,12 +24,13 @@ const CONFIG = {
   uploadTimeoutMs: 10 * 60 * 1000,
   successTimeoutMs: 90000,
   afterSuccessWaitMs: 2500,
+  waitAfterVideoSelectMs: 60000,
   manualLoginFallback: true,
   maxAutoLoginAttempts: 3,
   loginDetectionWindowMs: 20000,
   fileInputOrder: { image: 0, video: 1 },
   addCourseTexts: ["コース追加", "追加", "新規作成", "作成"],
-  submitTexts: ["登録", "作成", "保存", "追加", "送信", "提交"],
+  submitTexts: ["提出", "登録", "作成", "保存", "追加", "送信", "提交"],
   successTexts: ["保存しました", "登録しました", "作成しました", "成功", "完了"],
   busyTexts: ["アップロード中", "処理中", "変換中", "uploading", "transcoding"]
 };
@@ -91,6 +92,9 @@ async function dumpPageDiagnostics(page, reason) {
 }
 
 function attachPageDebugHooks(page) {
+  page.__trip7PendingUploadRequests = 0;
+  page.__trip7UploadFailures = [];
+
   page.on("console", msg => {
     const type = msg.type();
     if (["error", "warning"].includes(type)) {
@@ -105,12 +109,29 @@ function attachPageDebugHooks(page) {
   page.on("requestfailed", request => {
     const failure = request.failure();
     console.error(`[requestfailed] ${request.method()} ${request.url()} ${failure ? failure.errorText : ""}`);
+    if (isUploadRelatedRequest(request.url())) {
+      page.__trip7PendingUploadRequests = Math.max(0, (page.__trip7PendingUploadRequests || 0) - 1);
+      page.__trip7UploadFailures.push({
+        url: request.url(),
+        method: request.method(),
+        errorText: failure ? failure.errorText : "unknown"
+      });
+    }
   });
 
   page.on("response", response => {
     const status = response.status();
     if (status >= 400) {
       console.error(`[response:${status}] ${response.url()}`);
+    }
+    if (isUploadRelatedRequest(response.url())) {
+      page.__trip7PendingUploadRequests = Math.max(0, (page.__trip7PendingUploadRequests || 0) - 1);
+    }
+  });
+
+  page.on("request", request => {
+    if (isUploadRelatedRequest(request.url())) {
+      page.__trip7PendingUploadRequests = (page.__trip7PendingUploadRequests || 0) + 1;
     }
   });
 
@@ -119,6 +140,21 @@ function attachPageDebugHooks(page) {
       console.log(`[nav] ${frame.url()}`);
     }
   });
+}
+
+function isUploadRelatedRequest(url) {
+  const value = String(url || "").toLowerCase();
+  return (
+    value.includes("/api/") &&
+    (
+      value.includes("upload") ||
+      value.includes("save") ||
+      value.includes("image") ||
+      value.includes("video") ||
+      value.includes("thumbnail") ||
+      value.includes("file")
+    )
+  );
 }
 
 function parseCsv(text) {
@@ -610,20 +646,55 @@ async function setFiles(page, imagePath, videoPath) {
 async function waitForUploadReady(page) {
   const start = Date.now();
   let stableCount = 0;
+  let sawBusySignal = false;
+  page.__trip7UploadFailures = [];
 
   while (Date.now() - start < CONFIG.uploadTimeoutMs) {
     const text = normalizeText(await page.locator("body").innerText()).toLowerCase();
     const busy = CONFIG.busyTexts.some(word => text.includes(word.toLowerCase()));
+    const pendingUploadRequests = page.__trip7PendingUploadRequests || 0;
+    const uploadFailures = page.__trip7UploadFailures || [];
+    const fileInputs = await getFileInputs(page);
+    const imageValue = await fileInputs.nth(CONFIG.fileInputOrder.image).inputValue().catch(() => "");
+    const videoValue = await fileInputs.nth(CONFIG.fileInputOrder.video).inputValue().catch(() => "");
+    const submitButton = await getFirstVisible(page.locator('button[type="submit"], input[type="submit"], button.MuiButton-contained'));
+    const submitDisabled = submitButton
+      ? await submitButton.evaluate(el => el.disabled || el.getAttribute("aria-disabled") === "true").catch(() => false)
+      : false;
+    const hasBothFiles = Boolean(imageValue && videoValue);
 
-    if (!busy) {
+    if (busy || pendingUploadRequests > 0 || submitDisabled) {
+      sawBusySignal = true;
+    }
+
+    if (uploadFailures.length > 0) {
+      await dumpPageDiagnostics(page, "upload-request-failed");
+      const detail = uploadFailures
+        .map(item => `${item.method} ${item.url} ${item.errorText}`)
+        .join(" | ");
+      throw new Error(`Upload request failed: ${detail}`);
+    }
+
+    if (hasBothFiles && !busy && pendingUploadRequests === 0 && !submitDisabled) {
       stableCount += 1;
-      if (stableCount >= 3) return;
+      if (!sawBusySignal) {
+        if (stableCount >= 8) return;
+      } else if (stableCount >= 3) {
+        return;
+      }
     } else {
       stableCount = 0;
+    }
+
+    if ((Date.now() - start) % 5000 < 1000) {
+      console.log(
+        `[waitForUploadReady] files=${hasBothFiles} busyText=${busy} pendingUploadRequests=${pendingUploadRequests} submitDisabled=${submitDisabled} uploadFailures=${uploadFailures.length}`
+      );
     }
     await sleep(1000);
   }
 
+  await dumpPageDiagnostics(page, "upload-wait-timeout");
   throw new Error("Timed out waiting for upload/transcoding to finish");
 }
 
@@ -643,6 +714,16 @@ async function setIntroduction(page, value) {
 }
 
 async function clickSubmit(page) {
+  const submitTypeButton = await getFirstVisible(page.locator('button[type="submit"]'));
+  if (submitTypeButton) {
+    const text = normalizeText(await submitTypeButton.innerText().catch(() => ""));
+    if (!text || CONFIG.submitTexts.some(word => text.includes(word))) {
+      await submitTypeButton.scrollIntoViewIfNeeded().catch(() => {});
+      await submitTypeButton.click({ force: true });
+      return;
+    }
+  }
+
   for (const text of CONFIG.submitTexts) {
     const button = await getFirstVisible(page.getByRole("button", { name: text, exact: false }));
     if (button) {
@@ -703,6 +784,8 @@ async function fillOne(page, row, index, total) {
   await fillInput(page, ["標準視聴時間", "standard"], row.standard_viewing_time || "0");
   await setUploadToggle(page, row.upload_enabled || "する");
   await setFiles(page, imagePath, videoPath);
+  console.log(`Waiting ${CONFIG.waitAfterVideoSelectMs / 1000}s after selecting video before submit flow`);
+  await sleep(CONFIG.waitAfterVideoSelectMs);
   await waitForUploadReady(page);
   await setIntroduction(page, row.introduction || "");
   await clickSubmit(page);
