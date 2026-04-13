@@ -1,0 +1,49 @@
+请根据表格内容生成 video.csv，输出列固定为：
+category,title,subtitle,standard_viewing_time,upload_enabled,image_path,video_path,introduction
+
+生成规则：
+1. 左侧单元格文字中，最后一个数字前面的内容作为 category。
+例：
+Web3とブロックチェーンの基礎 1
+其中 category = Web3とブロックチェーンの基礎
+
+2. 左侧最后一个数字作为图片文件名编号。
+例：
+左侧是 1
+则 image_path = 1.png
+
+3. 右侧每一行文字中，最后一个形如 1-1、1-2、1-3 的编号作为视频文件名编号。
+例：
+Web3イントロダクション（1） 1-1
+则 video_path = 1-1.MP4
+
+4. 右侧每一行中，去掉最后的视频编号后，剩余文本作为：
+title
+subtitle
+introduction
+
+5. standard_viewing_time 固定写 0。
+
+6. upload_enabled 固定写 する。
+
+7. 同一个左侧分类块下的所有右侧行：
+category 相同
+image_path 相同
+video_path 按各自行尾编号生成
+
+8. 输出为标准 CSV，每个右侧条目生成一行数据。
+
+根据截图示例：
+左侧：
+Web3とブロックチェーンの基礎 1
+
+右侧：
+Web3イントロダクション（1） 1-1
+Web3イントロダクション（2） 1-2
+ブロックチェーン入門ービットコインを例にして 1-3
+
+应生成：
+category,title,subtitle,standard_viewing_time,upload_enabled,image_path,video_path,introduction
+Web3とブロックチェーンの基礎,Web3イントロダクション（1）,Web3イントロダクション（1）,0,する,1.png,1-1.MP4,Web3イントロダクション（1）
+Web3とブロックチェーンの基礎,Web3イントロダクション（2）,Web3イントロダクション（2）,0,する,1.png,1-2.MP4,Web3イントロダクション（2）
+Web3とブロックチェーンの基礎,ブロックチェーン入門ービットコインを例にして,ブロックチェーン入門ービットコインを例にして,0,する,1.png,1-3.MP4,ブロックチェーン入門ービットコインを例にして
