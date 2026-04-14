@@ -561,7 +561,6 @@ async function selectCategory(page, categoryText) {
   const category = normalizeText(categoryText);
   const control = await getCategoryControl(page);
   const tagName = await control.evaluate(el => el.tagName.toLowerCase());
-  const role = await control.getAttribute("role");
 
   if (tagName === "select") {
     const options = await control.locator("option").evaluateAll(nodes =>
@@ -571,9 +570,10 @@ async function selectCategory(page, categoryText) {
       }))
     );
 
-    const exact = options.find(opt => opt.text === category);
-    const fuzzy = options.find(opt => opt.text.includes(category) || category.includes(opt.text));
-    const target = exact || fuzzy;
+    const target = options.find(opt => {
+      const text = normalizeText(opt.text);
+      return text.includes(category) || category.includes(text);
+    });
     if (!target) {
       throw new Error(`Category option not found: ${category}`);
     }
@@ -586,15 +586,21 @@ async function selectCategory(page, categoryText) {
   const options = page.locator('[role="option"], li.MuiMenuItem-root');
   await options.first().waitFor({ state: "visible", timeout: CONFIG.defaultTimeoutMs });
 
-  const exact = options.filter({ hasText: new RegExp(`^\\s*${escapeRegExp(category)}\\s*$`) }).first();
-  if (await exact.count()) {
-    await exact.click();
-    return;
-  }
-
   const fuzzy = options.filter({ hasText: category }).first();
   if (await fuzzy.count()) {
     await fuzzy.click();
+    return;
+  }
+
+  const allTexts = await options.evaluateAll(nodes =>
+    nodes.map(node => (node.textContent || "").replace(/\s+/g, " ").trim())
+  );
+  const matchedText = allTexts.find(text => {
+    const normalized = normalizeText(text);
+    return normalized.includes(category) || category.includes(normalized);
+  });
+  if (matchedText) {
+    await options.filter({ hasText: matchedText }).first().click();
     return;
   }
 
@@ -810,10 +816,10 @@ async function main() {
 
   await ensureLoggedIn(page);
   await maybeWaitForManualLogin(page);
-  await ensureUploadPage(page);
-  await waitForUploadForm(page);
 
   for (let i = 0; i < rows.length; i++) {
+    await ensureUploadPage(page);
+    await waitForUploadForm(page);
     await fillOne(page, rows[i], i, rows.length);
   }
 
