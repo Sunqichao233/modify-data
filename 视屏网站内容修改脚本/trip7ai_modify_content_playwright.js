@@ -4,7 +4,7 @@ const path = require("path");
 let chromium;
 try {
   ({ chromium } = require("playwright"));
-} catch (error) {
+} catch {
   console.error("Missing playwright. Run: npm install playwright");
   process.exit(1);
 }
@@ -28,6 +28,9 @@ const CONFIG = {
   postSubmitResultTimeoutMs: 90000,
   afterSuccessWaitMs: 2500
 };
+
+const BASE_COLUMNS = ["filter_field", "filter_value", "modify_type", "modify_content"];
+const STATUS_COLUMN = "upload_status";
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -77,6 +80,7 @@ function parseCsv(text) {
       }
       continue;
     }
+
     if (ch === '"') {
       inQuotes = true;
     } else if (ch === ",") {
@@ -91,14 +95,37 @@ function parseCsv(text) {
       cell += ch;
     }
   }
+
   if (cell.length || row.length) {
     row.push(cell);
     rows.push(row);
   }
-  if (!rows.length) return [];
+  return rows;
+}
 
-  const header = rows[0].map(normalizeText);
-  return rows
+function csvEscape(value) {
+  const v = String(value ?? "");
+  if (v.includes('"') || v.includes(",") || v.includes("\n") || v.includes("\r")) {
+    return `"${v.replace(/"/g, '""')}"`;
+  }
+  return v;
+}
+
+function loadDataset() {
+  if (!fs.existsSync(CONFIG.datasetPath)) {
+    throw new Error(`Dataset not found: ${CONFIG.datasetPath}`);
+  }
+  const text = fs.readFileSync(CONFIG.datasetPath, "utf8").replace(/^\ufeff/, "");
+  const matrix = parseCsv(text);
+  if (!matrix.length) throw new Error("modify_dataset.csv is empty");
+
+  const header = matrix[0].map(normalizeText);
+  const missing = BASE_COLUMNS.filter(k => !header.includes(k));
+  if (missing.length) throw new Error(`Dataset missing columns: ${missing.join(", ")}`);
+
+  if (!header.includes(STATUS_COLUMN)) header.push(STATUS_COLUMN);
+
+  const rows = matrix
     .slice(1)
     .filter(cols => cols.some(v => normalizeText(v)))
     .map(cols => {
@@ -108,18 +135,18 @@ function parseCsv(text) {
       });
       return item;
     });
+
+  return { header, rows };
 }
 
-function loadDataset() {
-  if (!fs.existsSync(CONFIG.datasetPath)) {
-    throw new Error(`Dataset not found: ${CONFIG.datasetPath}`);
+function saveDataset(header, rows) {
+  const lines = [];
+  lines.push(header.map(csvEscape).join(","));
+  for (const row of rows) {
+    const line = header.map(col => csvEscape(row[col] ?? "")).join(",");
+    lines.push(line);
   }
-  const rows = parseCsv(fs.readFileSync(CONFIG.datasetPath, "utf8").replace(/^\ufeff/, ""));
-  if (!rows.length) throw new Error("modify_dataset.csv has no usable rows");
-  const required = ["filter_field", "filter_value", "modify_type", "modify_content"];
-  const missing = required.filter(key => !(key in rows[0]));
-  if (missing.length) throw new Error(`Dataset missing columns: ${missing.join(", ")}`);
-  return rows;
+  fs.writeFileSync(CONFIG.datasetPath, `${lines.join("\n")}\n`, "utf8");
 }
 
 function resolveAssetPath(rootDir, rawPath) {
@@ -131,8 +158,8 @@ function resolveAssetPath(rootDir, rawPath) {
     path.join(rootDir, normalized),
     path.join(rootDir, path.basename(normalized))
   ].filter(Boolean);
-  for (const c of candidates) {
-    if (fs.existsSync(c)) return c;
+  for (const file of candidates) {
+    if (fs.existsSync(file)) return file;
   }
   throw new Error(`Asset file not found: ${rawPath}`);
 }
@@ -167,8 +194,7 @@ async function hasLoginForm(page) {
 async function isLoginPage(page) {
   const url = page.url().toLowerCase();
   if (url.includes("/login")) return true;
-  const hasPass = await getFirstVisible(page.locator('input[type="password"]'));
-  return Boolean(hasPass);
+  return Boolean(await getFirstVisible(page.locator('input[type="password"]')));
 }
 
 async function loginIfNeeded(page) {
@@ -177,8 +203,7 @@ async function loginIfNeeded(page) {
 
   while (Date.now() < deadline) {
     await page.waitForLoadState("domcontentloaded").catch(() => {});
-    const onLogin = await isLoginPage(page);
-    if (!onLogin) return;
+    if (!await isLoginPage(page)) return;
     if (!await hasLoginForm(page)) {
       await sleep(1000);
       continue;
@@ -194,10 +219,7 @@ async function loginIfNeeded(page) {
       'input[type="email"]',
       'input[type="text"]'
     ], CONFIG.loginUser);
-    await fillFirstVisible(page, [
-      'input[name="password"]',
-      'input[type="password"]'
-    ], CONFIG.loginPassword);
+    await fillFirstVisible(page, ['input[name="password"]', 'input[type="password"]'], CONFIG.loginPassword);
 
     const loginBtn = await getFirstVisible(page.getByRole("button", { name: /ログイン|login|sign in/i }));
     if (loginBtn) {
@@ -209,7 +231,6 @@ async function loginIfNeeded(page) {
     await sleep(2500);
   }
 
-  await dumpPageDiagnostics(page, "login-timeout");
   throw new Error("Login did not complete in time");
 }
 
@@ -220,24 +241,17 @@ async function waitForManageReady(page) {
     if (filterBtn) return;
     await sleep(1000);
   }
-  await dumpPageDiagnostics(page, "manage-not-ready");
   throw new Error("Manage page not ready");
 }
 
-async function testManageHasContent(page) {
-  const deadline = Date.now() + 20000;
-  while (Date.now() < deadline) {
-    const rows = await page.locator(".MuiDataGrid-row, tbody tr").count().catch(() => 0);
-    if (rows > 0) {
-      const firstTitleCell = await getFirstVisible(page.locator('div[data-field="titleJp"] p, .MuiDataGrid-cell[data-field="titleJp"], tbody tr td:nth-child(2)'));
-      const text = firstTitleCell ? normalizeText(await firstTitleCell.innerText().catch(() => "")) : "";
-      console.log(`[manage-test] rows=${rows} firstTitle="${text}"`);
-      return;
-    }
-    await sleep(1000);
+async function ensureAtManage(page) {
+  if (!page.url().startsWith(CONFIG.manageUrl)) {
+    await page.goto(CONFIG.manageUrl, { waitUntil: "domcontentloaded" });
   }
-  await dumpPageDiagnostics(page, "manage-content-empty");
-  throw new Error("Manage page has no visible content rows");
+  await loginIfNeeded(page);
+  if (!page.url().startsWith(CONFIG.manageUrl)) {
+    await page.goto(CONFIG.manageUrl, { waitUntil: "domcontentloaded" });
+  }
 }
 
 async function openFilterAndApply(page, filterField, filterValue) {
@@ -247,9 +261,9 @@ async function openFilterAndApply(page, filterField, filterValue) {
   await sleep(500);
 
   const selects = page.locator("select");
-  const selectCount = await selects.count();
+  const count = await selects.count();
   const enabled = [];
-  for (let i = 0; i < selectCount; i++) {
+  for (let i = 0; i < count; i++) {
     const s = selects.nth(i);
     const visible = await s.isVisible().catch(() => false);
     const disabled = await s.isDisabled().catch(() => true);
@@ -267,14 +281,12 @@ async function openFilterAndApply(page, filterField, filterValue) {
   if (!colSelect) colSelect = enabled[0];
   if (!opSelect) opSelect = enabled.find(s => s !== colSelect) || enabled[1];
 
-  const raw = normalizeText(filterField).toLowerCase();
-  const targetField = raw === "title" ? "titleJp" : raw;
+  const targetField = normalizeText(filterField).toLowerCase() === "title" ? "titleJp" : normalizeText(filterField).toLowerCase();
   const colValues = await colSelect.locator("option").evaluateAll(nodes => nodes.map(n => String(n.value || "").trim()));
   await colSelect.selectOption(colValues.includes(targetField) ? targetField : colValues[0]);
 
   const opValues = await opSelect.locator("option").evaluateAll(nodes => nodes.map(n => String(n.value || "").trim().toLowerCase()));
-  const opValue = opValues.includes("contains") ? "contains" : opValues[0];
-  await opSelect.selectOption(opValue);
+  await opSelect.selectOption(opValues.includes("contains") ? "contains" : opValues[0]);
 
   const input = await getFirstVisible(page.locator('input[placeholder*="値"], input[type="text"]'));
   if (!input) throw new Error("Filter input not found");
@@ -291,13 +303,12 @@ async function getFilteredRowId(page, filterValue) {
   const row = await getFirstVisible(page.locator(".MuiDataGrid-row").filter({ hasText: target }));
   if (row) {
     const dataId = await row.getAttribute("data-id").catch(() => "");
-    const fromDataId = String(dataId || "").match(/\d+/);
-    if (fromDataId) return fromDataId[0];
-
+    const m1 = String(dataId || "").match(/\d+/);
+    if (m1) return m1[0];
     const idCell = await getFirstVisible(row.locator('div[data-field="id"] .MuiDataGrid-cellContent, div[data-field="id"]'));
     if (idCell) {
-      const m = normalizeText(await idCell.innerText().catch(() => "")).match(/\d+/);
-      if (m) return m[0];
+      const m2 = normalizeText(await idCell.innerText().catch(() => "")).match(/\d+/);
+      if (m2) return m2[0];
     }
   }
 
@@ -307,7 +318,6 @@ async function getFilteredRowId(page, filterValue) {
     if (m) return m[0];
   }
 
-  await dumpPageDiagnostics(page, "filtered-id-not-found");
   throw new Error(`Filtered row ID not found for: ${filterValue}`);
 }
 
@@ -327,10 +337,7 @@ async function getFileInputs(page, type) {
   const inputs = page.locator('input[type="file"]');
   const count = await inputs.count();
   const required = type === "video" ? 2 : 1;
-  if (count < required) {
-    await dumpPageDiagnostics(page, "file-inputs-not-found");
-    throw new Error(`Expected >=${required} file inputs for ${type}, found ${count}. url=${page.url()}`);
-  }
+  if (count < required) throw new Error(`Expected >=${required} file inputs for ${type}, found ${count}`);
   return inputs;
 }
 
@@ -355,17 +362,14 @@ async function applyModification(page, row) {
     return;
   }
 
-  throw new Error(`Unsupported modify_type: ${row.modify_type}. Use image or video`);
+  throw new Error(`Unsupported modify_type: ${row.modify_type}`);
 }
 
 async function clickSubmit(page) {
   const submit = await getFirstVisible(page.locator(
     'button[type="submit"], input[type="submit"], button:has-text("提出"), button:has-text("保存"), button:has-text("更新"), button:has-text("登録"), button:has-text("提交")'
   ));
-  if (!submit) {
-    await dumpPageDiagnostics(page, "submit-not-found");
-    throw new Error("Submit button not found");
-  }
+  if (!submit) throw new Error("Submit button not found");
   await submit.click({ force: true });
 }
 
@@ -378,33 +382,41 @@ function hasSuccessText(bodyText) {
 async function waitForSubmitResult(page) {
   const deadline = Date.now() + CONFIG.postSubmitResultTimeoutMs;
   while (Date.now() < deadline) {
-    if (page.url().startsWith(CONFIG.manageUrl)) {
-      console.log("[submit-result] redirected to manage");
-      return;
-    }
+    if (page.url().startsWith(CONFIG.manageUrl)) return;
     const body = await page.locator("body").innerText().catch(() => "");
-    if (hasSuccessText(body)) {
-      console.log("[submit-result] success message detected");
-      return;
-    }
+    if (hasSuccessText(body)) return;
     await sleep(1000);
   }
-  await dumpPageDiagnostics(page, "submit-result-timeout");
-  throw new Error("Submit result timeout: no success message and no redirect to manage");
+  throw new Error("Submit result timeout");
 }
 
-async function ensureAtManage(page) {
-  if (!page.url().startsWith(CONFIG.manageUrl)) {
-    await page.goto(CONFIG.manageUrl, { waitUntil: "domcontentloaded" });
+function compactError(error) {
+  const msg = normalizeText(error && error.message ? error.message : String(error || "unknown error"));
+  return msg.length > 180 ? `${msg.slice(0, 180)}...` : msg;
+}
+
+async function processOne(page, row) {
+  await ensureAtManage(page);
+  await waitForManageReady(page);
+  await sleep(CONFIG.waitAfterManageOpenMs);
+  await openFilterAndApply(page, row.filter_field, row.filter_value);
+
+  const itemId = await getFilteredRowId(page, row.filter_value);
+  console.log(`[filtered-id] ${itemId}`);
+
+  await page.goto(`${CONFIG.updateUrl}/${itemId}`, { waitUntil: "domcontentloaded" });
+  if (!await waitForUpdateReady(page, 20000)) {
+    throw new Error(`Did not reach update page: ${CONFIG.updateUrl}/${itemId}`);
   }
-  await loginIfNeeded(page);
-  if (!page.url().startsWith(CONFIG.manageUrl)) {
-    await page.goto(CONFIG.manageUrl, { waitUntil: "domcontentloaded" });
-  }
+
+  await applyModification(page, row);
+  await clickSubmit(page);
+  await waitForSubmitResult(page);
 }
 
 async function main() {
-  const rows = loadDataset();
+  const dataset = loadDataset();
+  const { header, rows } = dataset;
   console.log(`Loaded ${rows.length} rows from dataset`);
 
   const browser = await chromium.launch({ headless: CONFIG.headless, slowMo: CONFIG.slowMo });
@@ -414,35 +426,29 @@ async function main() {
     if (frame === page.mainFrame()) console.log(`[nav] ${frame.url()}`);
   });
 
-  await ensureAtManage(page);
+  let successCount = 0;
+  let failCount = 0;
 
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
     console.log(`Processing ${i + 1}/${rows.length}: ${row.filter_field}=${row.filter_value}, modify=${row.modify_type}`);
-
-    await ensureAtManage(page);
-    await waitForManageReady(page);
-    await sleep(CONFIG.waitAfterManageOpenMs);
-    await testManageHasContent(page);
-
-    await openFilterAndApply(page, row.filter_field, row.filter_value);
-    const itemId = await getFilteredRowId(page, row.filter_value);
-    console.log(`[filtered-id] ${itemId}`);
-
-    await page.goto(`${CONFIG.updateUrl}/${itemId}`, { waitUntil: "domcontentloaded" });
-    if (!await waitForUpdateReady(page, 20000)) {
-      await dumpPageDiagnostics(page, "update-page-not-ready");
-      throw new Error(`Did not reach update page: ${CONFIG.updateUrl}/${itemId}`);
+    try {
+      await processOne(page, row);
+      row[STATUS_COLUMN] = "success";
+      successCount += 1;
+      console.log(`Submitted: ${row.filter_value}`);
+      await sleep(CONFIG.afterSuccessWaitMs);
+    } catch (error) {
+      row[STATUS_COLUMN] = `failed: ${compactError(error)}`;
+      failCount += 1;
+      console.error(`Row failed: ${row.filter_value} -> ${row[STATUS_COLUMN]}`);
+      await dumpPageDiagnostics(page, "row-failed").catch(() => {});
+    } finally {
+      saveDataset(header, rows);
     }
-
-    await applyModification(page, row);
-    await clickSubmit(page);
-    await waitForSubmitResult(page);
-    console.log(`Submitted: ${row.filter_value}`);
-    await sleep(CONFIG.afterSuccessWaitMs);
   }
 
-  console.log("All modifications completed");
+  console.log(`All done. success=${successCount}, failed=${failCount}`);
   await browser.close();
 }
 

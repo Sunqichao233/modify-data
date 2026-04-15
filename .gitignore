@@ -39,3 +39,7 @@ desktop.ini
 *.log
 
 node_modules/
+
+# Debug artifacts
+debug/
+**/debug/
